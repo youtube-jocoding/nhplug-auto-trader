@@ -176,6 +176,34 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertIn("주문가능 현금 ***", message)
         self.assertNotIn("1,234,567", message)
 
+    def test_setup_refuses_live_account_without_telegram(self):
+        # 실거래인데 Telegram이 없으면 주문이 한 건도 안 나갑니다. 저장해 놓고
+        # 나중에 조용히 멈추는 대신 여기서 막아야 합니다.
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / ".env"
+            env.write_text("NHPLUG_APP_KEY=k\nNHPLUG_APP_SECRET=s\nNH_MOCK=1\n", encoding="utf-8")
+            with (
+                mock.patch.object(setup, "ENV", env),
+                mock.patch.object(setup, "check_connection") as connected,
+            ):
+                ok, message = setup.Handler.save(None, {"key": "k", "secret": "s", "mock": 0})
+                self.assertFalse(ok)
+                self.assertIn("Telegram을 먼저 연결", message)
+                connected.assert_not_called()
+                # 키는 남기되 모의투자로 되돌려 둡니다. 다시 넣게 하지 않기 위해서입니다.
+                self.assertIn("NH_MOCK=1", env.read_text(encoding="utf-8"))
+                self.assertFalse(setup.current_state()["live"])
+
+    def test_setup_state_flags_a_live_account_that_cannot_order(self):
+        with tempfile.TemporaryDirectory() as directory:
+            env = Path(directory) / ".env"
+            env.write_text("NHPLUG_APP_KEY=k\nNHPLUG_APP_SECRET=s\nNH_MOCK=0\n", encoding="utf-8")
+            with mock.patch.object(setup, "ENV", env):
+                state = setup.current_state()
+        self.assertTrue(state["live"])
+        self.assertFalse(state["telegram"])
+        self.assertTrue(state["blocked"])
+
     def test_setup_saves_keys_and_starts_on_mock(self):
         with (
             mock.patch.object(setup, "update_env") as update,

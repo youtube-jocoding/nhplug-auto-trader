@@ -145,10 +145,19 @@ margin:0 0 10px;max-height:220px;line-height:1.5}
 .dim{opacity:.45;pointer-events:none}
 .steps{counter-reset:s;margin:0 0 14px;padding-left:20px;font-size:.88rem;color:#66706a}
 .steps li{margin-bottom:4px}
+#now{display:flex;flex-wrap:wrap;gap:6px;margin:0 0 8px}
+#now span{font-size:.8rem;padding:4px 10px;border-radius:999px;background:#eef1ef;color:#3c4642}
+#now span.on{background:#e1f1e8;color:#075a33}
+#now span.live{background:#fdf7e8;color:#8a5f06;font-weight:600}
+#now span.off{background:#fff3f2;color:#c22e2e}
+#todo{font-size:.85rem;color:#66706a;margin:0 0 24px}
 </style></head><body>
 
 <h1>자동매매 설정</h1>
 <p class="sub">여기서 다 끝납니다. 파일을 직접 열 필요 없어요.</p>
+
+<div id="now"></div>
+<p id="todo"></p>
 
 <section id="s1">
   <h2><b>1</b> NH 키 넣기 <small id="k-state"></small></h2>
@@ -171,18 +180,17 @@ margin:0 0 10px;max-height:220px;line-height:1.5}
 </section>
 
 <section id="s2" class="dim">
-  <h2><b>2</b> Codex와 상담해서 전략 만들기 <small>선택</small></h2>
-  <p class="help">아래를 복사해서 <b>Codex에 그대로 붙여넣으세요.</b>
-    Codex가 하나씩 물어보고, 답을 다 들으면 <code>strategy.py</code>를 직접 고칩니다.</p>
-  <ol class="steps">
-    <li>아래 <b>복사</b>를 누릅니다</li>
-    <li>이 폴더에서 Codex를 열고 붙여넣습니다</li>
-    <li>Codex가 묻는 말에 편하게 답합니다</li>
-    <li>끝나면 아래 <b>전략 검사</b>를 눌러 확인합니다</li>
-  </ol>
-  <pre id="prompt"></pre>
-  <button onclick="copyPrompt()" id="cp-btn">Codex에 붙여넣을 내용 복사</button>
-  <button class="ghost" style="margin-top:8px" onclick="checkStrategy()" id="ck-btn">전략 검사</button>
+  <h2><b>2</b> Codex와 상담해서 전략 만들기</h2>
+  <p class="help"><b>Codex와 대화하던 중이라면</b> 그 창으로 돌아가 <b>“연결됐다”</b> 라고
+    말하면 됩니다. Codex가 이어서 하나씩 물어보고, 답을 다 들으면
+    <code>strategy.py</code>를 고쳐 줍니다. 여기서는 끝나고 <b>전략 검사</b>만 누르세요.</p>
+  <details style="margin-bottom:12px">
+    <summary style="cursor:pointer;font-size:.9rem">Codex를 직접 열어서 할래요 (프롬프트 복사)</summary>
+    <p class="help" style="margin-top:10px">이 폴더에서 Codex를 열고 아래를 붙여넣으세요.</p>
+    <pre id="prompt"></pre>
+    <button onclick="copyPrompt()" id="cp-btn">Codex에 붙여넣을 내용 복사</button>
+  </details>
+  <button class="ghost" onclick="checkStrategy()" id="ck-btn">전략 검사</button>
   <div id="m2" class="msg" hidden></div>
 </section>
 
@@ -250,16 +258,38 @@ async function post(path, body){
     body: JSON.stringify(body)});
   return r.json();
 }
+// 지금 무엇이 되어 있고 무엇이 남았는지를 맨 위에 늘 보여 줍니다.
+async function refresh(){
+  const out = await post('/status', {});
+  if (!out.ok) return;
+  const s = JSON.parse(out.message);
+  const chip = (text, cls) => `<span class="${cls||''}">${text}</span>`;
+  document.getElementById('now').innerHTML =
+    chip(s.keys ? 'NH 키 연결됨' : 'NH 키 없음', s.keys ? 'on' : 'off') +
+    chip(s.live ? '실제 계좌' : '모의투자', s.live ? 'live' : 'on') +
+    chip(s.telegram ? 'Telegram 연결됨' : 'Telegram 안 됨',
+         s.telegram ? 'on' : (s.live ? 'off' : ''));
+  let todo = '';
+  if (!s.keys) todo = '아래 1단계에서 NH 키를 넣어 주세요.';
+  else if (s.blocked) todo = '실제 계좌인데 Telegram이 없어 주문이 한 건도 나가지 않습니다. ' +
+    '아래 3단계에서 연결해 주세요.';
+  else if (s.live) todo = '실제 돈으로 주문이 나갑니다. 주문마다 Telegram으로 확인을 보냅니다.';
+  else todo = '모의투자입니다. 가짜 돈이라 승인 없이 바로 주문합니다. ' +
+    '실제 계좌로 바꾸려면 3단계 Telegram을 먼저 연결하세요.';
+  document.getElementById('todo').textContent = todo;
+  if (s.keys) for (const id of ['s2','s3','s4']) document.getElementById(id).classList.remove('dim');
+  if (s.keys) document.getElementById('k-state').textContent = '연결됨';
+  if (s.telegram) document.getElementById('t-state').textContent = '연결됨';
+  setMock(s.live ? 0 : 1);
+}
+refresh();
 async function save(){
   const btn = document.getElementById('save');
   btn.disabled = true; btn.textContent = '연결 확인 중…';
   const out = await post('/save', {key: key.value.trim(), secret: secret.value.trim(), mock});
   btn.disabled = false; btn.textContent = '저장하고 연결 확인';
   show('m1', out.message, out.ok);
-  if (out.ok){
-    document.getElementById('k-state').textContent = '연결됨';
-    for (const id of ['s2','s3','s4']) document.getElementById(id).classList.remove('dim');
-  }
+  await refresh();
 }
 async function copyPrompt(){
   const btn = document.getElementById('cp-btn');
@@ -299,7 +329,11 @@ async function tgLink(){
   const out = await post('/telegram-link', {});
   btn.disabled = false; btn.textContent = '봇에서 시작을 눌렀어요';
   show('m4', out.message, out.ok);
-  if (out.ok) document.getElementById('t-state').textContent = '연결됨';
+  if (out.ok){
+    await refresh();
+    // 여기까지 왔으면 실제 계좌로 바꿀 수 있습니다. 다음에 뭘 하면 되는지 알려 줍니다.
+    show('m4', out.message + '\n\n이제 1단계에서 [실제 계좌]를 고르고 저장하면 실거래로 바뀝니다.', true);
+  }
 }
 async function dryrun(){
   const btn = document.getElementById('d-btn');
@@ -374,6 +408,29 @@ def check_connection(mock):
     return False, f"연결하지 못했습니다.\n{tail}"
 
 
+def current_state():
+    """지금 무엇이 되어 있고 무엇이 남았는가. 화면 맨 위에 그대로 보여 줍니다.
+
+    "Telegram을 연결하세요"라고만 하면 어디서 어떻게 하는지 알 수가 없습니다.
+    지금 상태를 먼저 보여 주고, 남은 것을 짚어 주는 편이 덜 막막합니다.
+    """
+    saved = dotenv_values(ENV)
+
+    def has(*names):
+        return all(str(saved.get(name, "")).strip() for name in names)
+
+    live = str(saved.get("NH_MOCK", "1")).strip() == "0"
+    telegram_on = has("TELEGRAM_BOT_TOKEN", "TELEGRAM_CHAT_ID")
+    return {
+        "keys": has("NHPLUG_APP_KEY", "NHPLUG_APP_SECRET"),
+        "live": live,
+        "telegram": telegram_on,
+        # 실거래인데 Telegram이 없으면 주문이 한 건도 나가지 않습니다. 조용히
+        # 멈추는 대신 화면에서 미리 알려 줍니다.
+        "blocked": live and not telegram_on,
+    }
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # 브라우저 요청 로그로 화면을 채우지 않습니다.
@@ -399,6 +456,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         route = urllib.parse.urlparse(self.path).path
         handler = {
             "/save": self.save,
+            "/status": self.status,
             "/check": self.check,
             "/dryrun": self.dryrun,
             "/telegram-token": self.telegram_token,
@@ -417,10 +475,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if not key or not secret:
             return False, "APP KEY와 APP SECRET을 모두 넣어 주세요."
         mock = bool(body.get("mock", 1))
+
+        # 실거래인데 Telegram이 없으면 주문이 한 건도 안 나갑니다. 저장해 놓고
+        # 나중에 조용히 멈추게 두는 대신, 여기서 막고 무엇을 하면 되는지 알려 줍니다.
+        # 키는 모의투자로 저장해 두어 처음부터 다시 넣지 않아도 됩니다.
+        if not mock and not current_state()["telegram"]:
+            update_env(NHPLUG_APP_KEY=key, NHPLUG_APP_SECRET=secret, NH_MOCK=1)
+            return False, (
+                "Telegram을 먼저 연결해야 실제 계좌로 바꿀 수 있습니다.\n"
+                "승인 없이 실제 돈이 나가는 길을 두지 않기 때문입니다.\n\n"
+                "아래 3단계에서 봇을 연결한 뒤, 다시 [실제 계좌]를 고르고 저장해 주세요.\n"
+                "키는 모의투자로 저장해 뒀으니 다시 넣지 않아도 됩니다."
+            )
+
         update_env(
             NHPLUG_APP_KEY=key, NHPLUG_APP_SECRET=secret, NH_MOCK=1 if mock else 0
         )
         return check_connection(mock)
+
+    def status(self, _body):
+        """화면 맨 위 상태 줄. 열 때마다 새로 읽습니다."""
+        return True, json.dumps(current_state())
 
     def telegram_token(self, body):
         """봇 토큰을 확인하고, 사용자가 눌러서 연결할 링크를 돌려줍니다."""
