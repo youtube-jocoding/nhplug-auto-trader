@@ -58,34 +58,9 @@ https://github.com/youtube-jocoding/nhplug-auto-trader 를 받아서 자동매�
      - 제목: NH 자동매매
      - 실행 위치: 이 기기
      - 반복: 간격, 매 1시간
-     - 예약 작업 내용: 아래 예약내용 블록 안의 글을 그대로 넣어
+     - 예약 작업 내용: 저장소의 schedule.txt 파일 내용을 그대로 넣어
    만든 뒤에는 예약이 등록됐는지 확인하고, 첫 실행 결과를 나에게 보여줘.
    그리고 "멈추고 싶으면 예약을 일시 중지하면 된다"고 알려줘.
-
-<예약내용>
-이 폴더에서 python trade.py --scan 을 실행해.
-
-무슨 일이 있었는지는 결과의 "요약" 한 줄에 적혀 있어. 끝날 때 그 문장을 나에게
-그대로 알려 줘. 전문 용어나 JSON을 그대로 붙여넣지 말고.
-
-"판단해줘"가 비어 있으면 지금 정할 것이 없다는 뜻이야. 아무것도 하지 말고 끝내.
-
-비어 있지 않으면 먼저 뉴스를 확인해. --scan 이 준 종목 이름들을 OR 로 묶어서 한 번만 찾아:
-  국내 https://news.google.com/rss/search?q=삼성전자+OR+카카오&hl=ko&gl=KR&ceid=KR:ko
-  미국 https://news.google.com/rss/search?q=Apple+OR+Microsoft+stock&hl=en-US&gl=US&ceid=US:en
-제목과 날짜만 보면 돼. 기사 본문 링크는 열지 마.
-
-그다음 각 종목마다 "투자원칙"과 그 종목의 숫자(최근 20일 종가, 5일·20일 평균,
-52주 최고·최저, 거래대금, 보유 상태)와 방금 본 뉴스를 함께 보고
-buy·sell·hold 중 하나를 골라. 그리고 고른 것을 이렇게 넘겨:
-
-python trade.py --do "{\"005930\": {\"decision\": \"buy\", \"reason\": \"왜 그렇게 봤는지 두 문장 이내\"}}"
-
-지킬 것:
-- 보유 중이면 buy는 의미가 없고, 보유하지 않았으면 sell은 의미가 없어.
-- 주문은 반드시 --do 로만 해. broker.py 를 직접 부르거나 다른 방법으로 주문하지 마.
-- strategy.py 나 .env 나 다른 파일을 고치지 마. 이 예약은 판단만 한다.
-</예약내용>
 
 중요:
 - 처음은 모의투자(NH_MOCK=1)로 시작해.
@@ -110,7 +85,7 @@ python setup.py      # 브라우저가 열립니다
 3. **Telegram 연결** → 실제 계좌를 쓸 때만. 봇 토큰을 넣고 링크를 누르면 끝
 4. **예약 만들기** → Codex 앱 → 예약 → 1시간 간격. 화면에 적힌 내용을 그대로 붙여넣습니다
 
-컴퓨터를 켜 두기 어렵다면 → [컴퓨터를 꺼 두고 싶다면](#컴퓨터를-꺼-두고-싶다면)
+컴퓨터를 켜 두기 어렵다면 → [컴퓨터를 꺼 두고 싶다면](#컴퓨터를-꺼-두고-싶다면-원격-서버)
 
 ## 예약이 하는 일
 
@@ -149,25 +124,57 @@ python setup.py      # 브라우저가 열립니다
 
 손절도 1시간마다 확인합니다. 간격은 예약 설정에서 바꿉니다.
 
-## 컴퓨터를 꺼 두고 싶다면
+## 컴퓨터를 꺼 두고 싶다면 (원격 서버)
 
-로컬 예약은 컴퓨터가 켜져 있어야 돕니다. 꺼 두려면 **항상 켜져 있는 컴퓨터**가
-필요합니다 — 라즈베리파이나 남는 노트북이면 충분합니다. 거기에 그대로 설치하고
-예약을 만들면 됩니다.
+내 PC 대신 **항상 켜져 있는 리눅스 서버**에 똑같이 설치하고 거기서 돌립니다.
+맥미니를 원격으로 쓰는 것과 같습니다. **코드는 하나도 안 고칩니다.**
 
-VPS를 쓴다면 Codex 앱 예약 대신 cron으로 같은 일을 시킬 수 있습니다. 코드는
-그대로입니다.
+DigitalOcean 드롭릿이면 가장 싼 것(1GB)으로 충분합니다. 1시간에 한 번 몇 초 도는 게
+전부니까요. Codex 앱의 **DigitalOcean 플러그인**을 쓰면 드롭릿을 만들고 Codex의 원격
+작업 공간으로 바로 붙여 줍니다. 직접 SSH로 접속해도 똑같습니다.
+
+**① 설치**
 
 ```bash
-pip install openai-codex          # codex 실행 파일이 같이 깔립니다
-codex login --api-key ...          # 화면 없이 로그인
-# crontab -e
-0 * * * * cd ~/nhplug-auto-trader && codex exec "$(cat schedule.txt)" >> trade.log 2>&1
+git clone https://github.com/youtube-jocoding/nhplug-auto-trader
+cd nhplug-auto-trader
+python3 -m venv .venv && . .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-`schedule.txt`에는 위 예약내용 블록을 그대로 넣습니다.
+**② 키 넣기.** 서버에는 브라우저가 없으니 내 PC 브라우저로 설정 화면을 엽니다.
+SSH 포트를 하나 넘겨 두고 서버에서 `python setup.py` 를 실행하면 됩니다.
 
-> **Codex 클라우드 예약은 쓸 수 없습니다.** NH PLUG API가 **8443 포트**를 쓰는데,
+```bash
+ssh -L 8777:127.0.0.1:8777 root@서버주소     # 내 PC에서
+python setup.py                              # 서버에서 → 내 PC의 http://127.0.0.1:8777 로 접속
+```
+
+**③ Codex 로그인.** 판단을 서버에서 하려면 서버에도 로그인이 필요합니다.
+
+```bash
+pip install openai-codex     # codex 실행 파일이 같이 깔립니다
+codex login                  # 화면에 뜨는 주소를 내 PC 브라우저에서 열어 승인
+```
+
+**구독 로그인이라 API 요금이 붙지 않습니다.** 한 번 하면 서버에 남습니다.
+
+**④ 예약.** Codex 앱에서 이 서버를 작업 공간으로 연결한 뒤 예약을 만듭니다.
+실행 위치 목록에 서버가 안 보이면 서버의 cron으로 같은 일을 시키면 됩니다.
+
+```bash
+crontab -e
+0 * * * * cd ~/nhplug-auto-trader && .venv/bin/codex exec "$(cat schedule.txt)" >> trade.log 2>&1
+```
+
+예약에 넣는 글과 cron이 읽는 글이 같은 `schedule.txt` 입니다. 무슨 일이 있었는지는
+`tail -f trade.log` 로 봅니다.
+
+> **시간대는 신경 쓰지 않아도 됩니다.** 서버가 UTC여도 국내장은 서울 시각,
+> 미국장은 뉴욕 시각으로 판정합니다. 로그가 읽기 편하도록
+> `sudo timedatectl set-timezone Asia/Seoul` 을 해 두면 좋습니다(선택).
+
+> **Codex 클라우드 예약은 쓸 수 없습니다.** NH PLUG API가 **8443 포트**를 쓰는데
 > 클라우드의 이그레스 프록시가 443만 중계합니다. 허용 도메인 설정은 포트를 받지
 > 않아 우회할 방법이 없습니다. 실제로 확인한 결과입니다.
 >
@@ -176,7 +183,9 @@ codex login --api-key ...          # 화면 없이 로그인
 > upstream connect error ... delayed connect error: Connection refused
 > ```
 >
-> Telegram·뉴스(443)는 잘 되지만 시세와 주문이 안 되니 의미가 없습니다.
+> Railway처럼 컨테이너가 매번 새로 뜨는 곳도 맞지 않습니다. `codex login` 이
+> 남지 않아 OpenAI API 키를 써야 하고, 그러면 판단마다 요금이 붙습니다.
+> **디스크가 남는 서버**여야 구독 로그인을 그대로 씁니다.
 
 ## 파일
 
@@ -188,6 +197,7 @@ codex login --api-key ...          # 화면 없이 로그인
 | `trade.py` | `--scan` 으로 살피고 `--do` 로 주문 |
 | `check.py` | 전략이 제대로 돌아가는지 검사 |
 | `telegram.py` | 실거래 주문을 Telegram에서 한 번 승인 |
+| `schedule.txt` | 예약에 넣을 글. 화면·문서·cron이 이 파일 하나를 씁니다 |
 | `tests/` | 프로젝트 자체 검사 (`python -m unittest discover -s tests`) |
 
 ## 전략 바꾸기

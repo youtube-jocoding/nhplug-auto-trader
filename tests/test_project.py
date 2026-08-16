@@ -187,6 +187,20 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertIn("사고팔 상황이 아닙니다", trade.summary([], ["카카오 거래 부족"], []))
         self.assertIn("아무것도 하지 않았습니다", trade.summary([], [], []))
 
+    def test_schedule_text_lives_in_one_file(self):
+        # 예약에 넣을 글이 화면과 문서에 따로 적혀 있으면 언젠가 서로 어긋납니다.
+        # 실제로 한 번 어긋나서 화면에는 없어진 공시 얘기가 남아 있었습니다.
+        text = setup.schedule_text()
+        self.assertIn("trade.py --scan", text)
+        self.assertIn("trade.py --do", text)
+        self.assertIn("news.google.com", text)
+        page = setup.PAGE.replace("%%SCHEDULE%%", text)
+        self.assertIn("trade.py --scan", page)
+        self.assertNotIn("%%SCHEDULE%%", page)
+        # README는 이 파일을 가리키기만 해야 합니다. 본문을 베껴 두면 또 어긋납니다.
+        readme = (Path(setup.__file__).with_name("README.md")).read_text(encoding="utf-8")
+        self.assertIn("schedule.txt", readme)
+
     def test_setup_page_script_has_no_broken_string(self):
         # PAGE는 파이썬 """...""" 안에 있어서 \n 을 그대로 쓰면 진짜 줄바꿈이 되어
         # 자바스크립트 문자열이 끊깁니다. 그러면 화면의 버튼이 전부 죽습니다.
