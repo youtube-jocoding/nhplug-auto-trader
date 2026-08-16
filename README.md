@@ -1,12 +1,5 @@
-# nhplug-auto-trader — Namuh PLUG 자동매매 (국내 + 미국)
-
-개발을 몰라도 됩니다. **아래를 복사해서 Codex에 붙여넣으면** 설치부터 전략 만들기,
-장중 자동 실행 예약까지 Codex가 알아서 합니다.
-
-> 장중 판단과 예약은 **Codex 앱 기능**을 씁니다. 그래서 붙여넣을 곳은 Codex입니다.
-
----
-
+# Namuh PLUG 자동매매 (국내 + 미국)
+아래 프롬프트를 복사해서 Codex에 붙여넣으면 됩니다.
 ```
 https://github.com/youtube-jocoding/nhplug-auto-trader 를 받아서 자동매매를 시작할 수 있게 해줘.
 
