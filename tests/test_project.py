@@ -176,6 +176,15 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertIn("주문가능 현금 ***", message)
         self.assertNotIn("1,234,567", message)
 
+    def test_setup_page_script_has_no_broken_string(self):
+        # PAGE는 파이썬 """...""" 안에 있어서 \n 을 그대로 쓰면 진짜 줄바꿈이 되어
+        # 자바스크립트 문자열이 끊깁니다. 그러면 화면의 버튼이 전부 죽습니다.
+        script = setup.PAGE.split("<script>")[1].split("</script>")[0]
+        for number, line in enumerate(script.splitlines(), 1):
+            with self.subTest(line=number):
+                self.assertEqual(line.count("'") % 2, 0, line)
+                self.assertEqual(line.count("`") % 2, 0, line)
+
     def test_setup_refuses_live_account_without_telegram(self):
         # 실거래인데 Telegram이 없으면 주문이 한 건도 안 나갑니다. 저장해 놓고
         # 나중에 조용히 멈추는 대신 여기서 막아야 합니다.

@@ -332,7 +332,7 @@ async function tgLink(){
   if (out.ok){
     await refresh();
     // 여기까지 왔으면 실제 계좌로 바꿀 수 있습니다. 다음에 뭘 하면 되는지 알려 줍니다.
-    show('m4', out.message + '\n\n이제 1단계에서 [실제 계좌]를 고르고 저장하면 실거래로 바뀝니다.', true);
+    show('m4', out.message + '\\n\\n이제 1단계에서 [실제 계좌]를 고르고 저장하면 실거래로 바뀝니다.', true);
   }
 }
 async function dryrun(){
