@@ -16,6 +16,7 @@ import json
 import sys
 import time
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import broker
 import strategy
@@ -32,17 +33,27 @@ TRIED = Path(__file__).with_name(".cache") / "tried.json"
 
 
 def log(message):
-    """진행 상황은 표준오류로 보냅니다. 표준출력은 JSON 몫입니다."""
-    print(f"[{datetime.datetime.now():%H:%M:%S}] {message}", file=sys.stderr, flush=True)
+    """진행 상황은 표준오류로 보냅니다. 표준출력은 JSON 몫입니다.
+
+    시각도 서울 기준입니다. UTC 서버에서 로그를 보며 헷갈리지 않게.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).astimezone(SEOUL)
+    print(f"[{now:%H:%M:%S}] {message}", file=sys.stderr, flush=True)
+
+
+SEOUL = ZoneInfo("Asia/Seoul")
 
 
 def kr_open(now=None):
     """국내장이 열렸나. 주말과 09:00~15:20 밖은 쉽니다.
 
+    **서울 시각으로 봅니다.** 서버 시각을 그대로 쓰면 UTC로 맞춰진 클라우드에서
+    엉뚱한 시간을 장중으로 읽습니다(09시 UTC = 서울 18시).
+
     공휴일은 여기서 알 수 없습니다. 휴장일에는 NH가 주문을 거절하고, 그 사실이
     로그에 남습니다.
     """
-    now = now or datetime.datetime.now()
+    now = (now or datetime.datetime.now(datetime.timezone.utc)).astimezone(SEOUL)
     if now.weekday() >= 5:
         return False
     return now.replace(hour=9, minute=0) <= now <= now.replace(hour=15, minute=20)

@@ -169,6 +169,16 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertIn("1,234,567원", message)
         self.assertIn("500***69", message)
 
+    def test_market_hours_follow_seoul_not_the_server_clock(self):
+        # UTC로 맞춰진 서버에서 서버 시각을 그대로 쓰면 09시 UTC(서울 18시)를
+        # 장중으로 읽습니다. 국내 주식이 통째로 안 돌아갑니다.
+        seoul_noon = datetime.datetime(2026, 8, 17, 3, 0, tzinfo=datetime.timezone.utc)
+        self.assertTrue(trade.kr_open(seoul_noon))  # 서울 12:00 (UTC 03:00)
+        seoul_evening = datetime.datetime(2026, 8, 17, 9, 0, tzinfo=datetime.timezone.utc)
+        self.assertFalse(trade.kr_open(seoul_evening))  # 서울 18:00 (UTC 09:00)
+        saturday = datetime.datetime(2026, 8, 15, 3, 0, tzinfo=datetime.timezone.utc)
+        self.assertFalse(trade.kr_open(saturday))
+
     def test_scan_says_in_words_what_happened(self):
         # "판단해줘가 비어 있습니다"만 보면 무슨 뜻인지 알 수 없습니다.
         self.assertIn("사고팔지 정해 주세요", trade.summary([], [], [{"이름": "삼성전자"}]))
