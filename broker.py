@@ -32,8 +32,6 @@ LIVE_URL = "https://api.nhplug.com:8443"
 MOCK_URL = "https://moapi.nhplug.com:8443"
 
 MOCK = os.getenv("NH_MOCK", "1") != "0"
-# 촬영·화면공유 때 잔고와 금액을 가립니다. 평소에는 그대로 보입니다.
-MASK_MONEY = os.getenv("MASK_MONEY", "0") == "1"
 BASE_URL = MOCK_URL if MOCK else LIVE_URL
 
 os.environ["NHPLUG_AUTH_URL"] = AUTH_URL

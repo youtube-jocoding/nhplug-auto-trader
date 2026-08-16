@@ -161,20 +161,21 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         self.assertEqual(result.stdout.strip(), "통과했습니다")
 
-    def test_setup_connection_respects_mask_money_from_dotenv(self):
-        with tempfile.TemporaryDirectory() as directory:
-            env = Path(directory) / ".env"
-            env.write_text("MASK_MONEY=1\n", encoding="utf-8")
-            child = mock.Mock(returncode=0, stdout="OK 500***69 1234567", stderr="")
-            with (
-                mock.patch.object(setup, "ENV", env),
-                mock.patch.object(setup, "run_child", return_value=child),
-                mock.patch.dict(setup.os.environ, {"MASK_MONEY": "0"}),
-            ):
-                ok, message = setup.check_connection(True)
+    def test_setup_connection_shows_balance_and_hides_account_number(self):
+        child = mock.Mock(returncode=0, stdout="OK 500***69 1234567", stderr="")
+        with mock.patch.object(setup, "run_child", return_value=child):
+            ok, message = setup.check_connection(True)
         self.assertTrue(ok)
-        self.assertIn("주문가능 현금 ***", message)
-        self.assertNotIn("1,234,567", message)
+        self.assertIn("1,234,567원", message)
+        self.assertIn("500***69", message)
+
+    def test_scan_says_in_words_what_happened(self):
+        # "판단해줘가 비어 있습니다"만 보면 무슨 뜻인지 알 수 없습니다.
+        self.assertIn("사고팔지 정해 주세요", trade.summary([], [], [{"이름": "삼성전자"}]))
+        self.assertIn("삼성전자 · 카카오", trade.summary([], [], [{"이름": "삼성전자"}, {"이름": "카카오"}]))
+        self.assertIn("손절", trade.summary(["삼성전자(005930) 매도 · 손절"], [], []))
+        self.assertIn("사고팔 상황이 아닙니다", trade.summary([], ["카카오 거래 부족"], []))
+        self.assertIn("아무것도 하지 않았습니다", trade.summary([], [], []))
 
     def test_setup_page_script_has_no_broken_string(self):
         # PAGE는 파이썬 """...""" 안에 있어서 \n 을 그대로 쓰면 진짜 줄바꿈이 되어

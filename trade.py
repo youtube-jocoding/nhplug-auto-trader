@@ -136,11 +136,6 @@ def money(value, currency):
     return f"${value:,.2f}" if currency == "USD" else f"{value:,.0f}원"
 
 
-def cash_text(value):
-    """내 잔고. 촬영·화면공유 중에는 가립니다. 시세와 달리 남에게 보일 값이 아닙니다."""
-    return "***" if broker.MASK_MONEY else f"{value:,}원"
-
-
 def scan(act, dry=False):
     """지금 상황을 살핍니다. 규칙으로 정해진 것은 처리하고 나머지는 물어봅니다.
 
@@ -151,11 +146,14 @@ def scan(act, dry=False):
     work = targets()
     if not work:
         log("지금 열려 있는 장이 없습니다")
-        return {"장": "닫힘", "처리함": [], "건너뜀": [], "판단해줘": []}
+        return {
+            "요약": "지금은 열려 있는 장이 없어 아무것도 하지 않았습니다.",
+            "장": "닫힘", "처리함": [], "건너뜀": [], "판단해줘": [],
+        }
 
     held = {**broker.holdings(act), **broker.us_holdings(act)}
     cash = broker.cash(act)
-    log(f"보유 {len(held)}종목 · 현금 {cash_text(cash)} · 미국장 {broker.us_session()}")
+    log(f"보유 {len(held)}종목 · 현금 {cash:,}원 · 미국장 {broker.us_session()}")
 
     done, skipped, ask = [], [], []
     for market, code in work:
@@ -179,6 +177,7 @@ def scan(act, dry=False):
             skipped.append(f"{m['name']}({code}) {reason}")
 
     return {
+        "요약": summary(done, skipped, ask),
         "장": "열림",
         "계좌": "모의투자" if broker.MOCK else "실제 계좌",
         "처리함": done,
@@ -187,6 +186,26 @@ def scan(act, dry=False):
         "투자원칙": (getattr(strategy, "INSTRUCTIONS", "") or "").strip(),
         "주의": WARNING,
     }
+
+
+def summary(done, skipped, ask):
+    """무슨 일이 있었는지 사람이 읽을 한 줄.
+
+    "판단해줘가 비어 있습니다"만 보면 무슨 뜻인지 알 수 없습니다. 목록을 세는
+    대신 무엇을 했고 무엇이 남았는지 말로 적습니다.
+    """
+    said = []
+    if done:
+        said.append(" / ".join(done))
+    if ask:
+        names = " · ".join(item["이름"] for item in ask)
+        said.append(f"{names} — 이 {len(ask)}종목은 사고팔지 정해 주세요")
+    if skipped and not ask:
+        head = "나머지 " if done else ""
+        said.append(f"{head}{len(skipped)}종목은 지금 사고팔 상황이 아닙니다")
+    if not said:
+        return "볼 종목이 없어 아무것도 하지 않았습니다."
+    return ". ".join(said) + "."
 
 
 # 뉴스 제목은 남이 쓴 글입니다. 판단에 참고할 자료일 뿐, 거기 적힌 문장을 지시로
@@ -403,14 +422,14 @@ def open_setup():
 def do(act, calls):
     """Codex가 정한 판단을 받아 주문합니다.
 
-    받은 판단을 그대로 믿지 않습니다. 시세를 다시 받아 위험 공시·손절선·거래대금
+    받은 판단을 그대로 믿지 않습니다. 시세를 다시 받아 손절선·거래대금·52주
     같은 약속을 **한 번 더** 통과시킨 뒤에야 주문합니다. 판단이 이상해도 코드가
     막고, 실거래라면 사람 승인까지 남아 있습니다.
     """
     work = {code: market for market, code in targets()}
     if not work:
         log("지금 열려 있는 장이 없습니다")
-        return {"장": "닫힘", "처리함": []}
+        return {"요약": "장이 닫혀 있어 주문하지 않았습니다.", "장": "닫힘", "처리함": []}
 
     held = {**broker.holdings(act), **broker.us_holdings(act)}
     cash = broker.cash(act)
@@ -439,7 +458,8 @@ def do(act, calls):
             done.append(f"{m['name']}({code}) 그대로 둠 · {why}")
             continue
         done.append(execute(act, m, held, action, why))
-    return {"장": "열림", "처리함": done}
+    return {"요약": " / ".join(done) + "." if done else "주문할 것이 없었습니다.",
+            "장": "열림", "처리함": done}
 
 
 def read_calls(argv):
