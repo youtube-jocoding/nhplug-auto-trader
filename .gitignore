@@ -1,0 +1,7 @@
+.env
+.venv/
+.cache/
+.e2e-*/
+__pycache__/
+.ruff_cache/
+strategy_backup.py
