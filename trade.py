@@ -206,6 +206,7 @@ def scan(act, dry=False):
             log(f"  {m['name']}({code}) hold · {reason}")
             skipped.append(f"{m['name']}({code}) {reason}")
 
+    held, cash = refreshed(act, held, cash, done)
     return {
         "요약": summary(done, skipped, ask),
         "장": "열림",
@@ -244,6 +245,29 @@ def portfolio(held, cash):
     }
 
 
+def sent_order(done):
+    """이번 회차에 실제로 주문이 나갔나."""
+    return any(item.get("구분") in ("매수", "매도") for item in done or [])
+
+
+def refreshed(act, held, cash, done):
+    """주문을 냈으면 NH에 잔고를 다시 물어봅니다.
+
+    우리가 짐작해서 목록에서 빼면, 아직 체결되지 않은 주문까지 판 것처럼 보입니다.
+    반대로 그냥 두면 이미 팔린 종목이 계속 남습니다. NH가 뭐라고 하는지가 사실이니
+    한 번 더 묻습니다. 주문을 낸 회차에만 드는 비용입니다.
+
+    다시 받지 못해도 회차는 끝나야 합니다. 그때는 있던 것을 그대로 씁니다.
+    """
+    if not sent_order(done):
+        return held, cash
+    try:
+        return {**broker.holdings(act), **broker.us_holdings(act)}, broker.cash(act)
+    except Exception as exc:
+        log(f"주문 뒤 잔고를 다시 받지 못했습니다: {exc}")
+        return held, cash
+
+
 def remember(result):
     """이번 회차를 대시보드가 읽을 수 있게 남깁니다.
 
@@ -277,7 +301,13 @@ def remember(result):
             rounds.insert(0, entry)
         del rounds[KEEP_ROUNDS:]
 
-    saved |= {"마지막실행": now.strftime("%Y-%m-%d %H:%M"), "회차": rounds}
+    # 주문을 낸 회차는 체결이 몇 초 뒤에 잡히기도 합니다. 화면이 곧 한 번 더
+    # 확인하도록 표시해 둡니다. 조회만 하는 회차가 이 표시를 지웁니다.
+    saved |= {
+        "마지막실행": now.strftime("%Y-%m-%d %H:%M"),
+        "회차": rounds,
+        "확인필요": sent_order(result.get("처리함")),
+    }
     for field in ("계좌", "지금", "국내장", "미국장", "요약"):
         if field in result:
             saved[field] = result[field]
@@ -593,6 +623,8 @@ def do(act, calls):
             done.append(noted(label(m["name"], code), "그대로 둠", why))
             continue
         done.append(execute(act, m, held, action, why))
+
+    held, cash = refreshed(act, held, cash, done)
     return {
         "요약": traded(done, held),
         "장": "열림",

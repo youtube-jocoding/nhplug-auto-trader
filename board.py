@@ -22,6 +22,7 @@ import trade
 
 REFRESH = 60  # 이 초마다 화면이 스스로 다시 그립니다. NH에 다시 묻지는 않습니다.
 STALE = 600  # 남겨 둔 자료가 이만큼 오래됐으면, 화면을 열 때 알아서 다시 불러옵니다.
+AFTER_ORDER = 45  # 주문을 낸 직후에는 이만큼만 기다립니다. 체결이 곧 잡힙니다.
 
 HEAD = """<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -204,25 +205,32 @@ def load_now():
         print(f"계좌를 불러오지 못했습니다: {exc}")
 
 
-def stale():
-    """남겨 둔 자료가 오래됐나. 파일이 아예 없으면 당연히 오래된 것입니다."""
-    try:
-        return time.time() - trade.BOARD.stat().st_mtime > STALE
-    except OSError:
-        return True
+def wait_before_asking(saved):
+    """다시 물어보기까지 기다릴 시간.
 
-
-def load_if_stale(server):
-    """화면을 열었는데 보여 줄 것이 없거나 오래됐으면 알아서 불러옵니다.
-
-    사람이 버튼을 눌러야 채워지는 화면은 화면이 아니라 숙제입니다. 다만 60초마다
-    NH에 묻지는 않도록, 실패했더라도 STALE 만큼은 쉬었다 다시 시도합니다.
+    주문을 낸 직후에는 짧게 봅니다. 체결이 몇 초 뒤에 잡히는 일이 있어서,
+    판 종목이 목록에 그대로 남아 있는 것처럼 보입니다.
     """
+    return AFTER_ORDER if saved.get("확인필요") else STALE
+
+
+def load_if_stale(server, saved):
+    """보여 줄 것이 없거나 오래됐으면 알아서 불러옵니다.
+
+    사람이 눌러야 채워지는 화면은 화면이 아니라 숙제입니다. 다만 새로고침마다
+    NH에 묻지는 않도록, 실패했더라도 얼마간은 쉬었다 다시 시도합니다.
+    """
+    gap = wait_before_asking(saved)
+    try:
+        fresh = time.time() - trade.BOARD.stat().st_mtime < gap
+    except OSError:
+        fresh = False  # 파일이 아예 없으면 당연히 불러와야 합니다
     now = time.time()
-    if not stale() or now - getattr(server, "last_try", 0) < STALE:
-        return
+    if fresh or now - getattr(server, "last_try", 0) < gap:
+        return False
     server.last_try = now  # 먼저 적어 둡니다. 새로고침이 겹쳐도 두 번 나가지 않게.
     load_now()
+    return True
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -252,8 +260,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
             load_now()
             # 주소에 load가 남아 있으면 60초마다 NH에 다시 묻게 됩니다. 되돌려 보냅니다.
             return self._send(303, "불러왔습니다.", location="/")
-        load_if_stale(self.server)
-        self._send(200, page(read_board()))
+        saved = read_board()
+        if load_if_stale(self.server, saved):
+            saved = read_board()  # 방금 받아 온 것으로 그립니다
+        self._send(200, page(saved))
 
 
 USAGE = """python board.py            지금 상황을 화면으로 봅니다

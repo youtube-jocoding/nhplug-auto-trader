@@ -178,6 +178,31 @@ class IntegrationHelpersTests(unittest.TestCase):
                 self.assertEqual(len(saved["회차"]), 1)
                 self.assertTrue(saved["마지막실행"])  # 돌긴 돌았다는 것은 남습니다
 
+    def test_after_an_order_the_holdings_come_from_nh_not_from_a_guess(self):
+        # 판 종목이 목록에 그대로 남아 있었습니다. buy는 목록에 더하는데 sell은
+        # 빼지 않았기 때문입니다. 짐작으로 빼면 미체결까지 판 것처럼 보이므로,
+        # 주문을 낸 회차에는 NH에 다시 물어봅니다.
+        old = {"GOOGL": {"name": "알파벳", "qty": 3, "avg": 344.0, "price": 342.0, "pnl_pct": -0.5}}
+        sold = trade.noted("알파벳(GOOGL)", "매도 주문 3주 · 주문번호 8", "손절", "매도")
+        with (
+            mock.patch.object(broker, "holdings", return_value={}),
+            mock.patch.object(broker, "us_holdings", return_value={}),
+            mock.patch.object(broker, "cash", return_value=9_000_000),
+        ):
+            held, cash = trade.refreshed("500", old, 1_000_000, [sold])
+        self.assertEqual(held, {})  # NH가 없다고 하면 없는 것입니다
+        self.assertEqual(cash, 9_000_000)
+
+        # 주문이 없던 회차까지 다시 묻지는 않습니다. 쓸데없는 조회입니다.
+        with mock.patch.object(broker, "holdings", side_effect=AssertionError("묻지 마")):
+            held, cash = trade.refreshed("500", old, 1_000_000, [trade.noted("x", "그대로 둠")])
+        self.assertEqual(held, old)
+
+        # 다시 받지 못해도 회차는 끝나야 합니다. 있던 것을 그대로 씁니다.
+        with mock.patch.object(broker, "holdings", side_effect=RuntimeError("끊김")):
+            held, cash = trade.refreshed("500", old, 1_000_000, [sold])
+        self.assertEqual(held, old)
+
     def test_a_scan_round_is_replaced_by_the_order_that_follows_it(self):
         # --scan 으로 물어보고 --do 로 주문하면 같은 분에 두 줄이 생깁니다.
         with tempfile.TemporaryDirectory() as folder:
@@ -193,15 +218,25 @@ class IntegrationHelpersTests(unittest.TestCase):
     def test_board_fills_itself_without_the_user_pressing_anything(self):
         # 사람이 눌러야 채워지는 화면은 화면이 아니라 숙제입니다.
         server = mock.Mock(last_try=0)
-        with (
-            mock.patch.object(board, "stale", return_value=True),
-            mock.patch.object(board, "load_now") as loaded,
-        ):
-            board.load_if_stale(server)
-            self.assertEqual(loaded.call_count, 1)
-            # 다만 새로고침마다 NH에 묻지는 않습니다. 잠시 쉬었다 다시 봅니다.
-            board.load_if_stale(server)
-            self.assertEqual(loaded.call_count, 1)
+        with tempfile.TemporaryDirectory() as folder:
+            missing = Path(folder) / "board.json"  # 아직 아무것도 없는 상태
+            with (
+                mock.patch.object(trade, "BOARD", missing),
+                mock.patch.object(board, "load_now") as loaded,
+            ):
+                self.assertTrue(board.load_if_stale(server, {}))
+                self.assertEqual(loaded.call_count, 1)
+                # 다만 새로고침마다 NH에 묻지는 않습니다. 잠시 쉬었다 다시 봅니다.
+                self.assertFalse(board.load_if_stale(server, {}))
+                self.assertEqual(loaded.call_count, 1)
+
+    def test_board_looks_again_soon_after_an_order(self):
+        # 판 종목이 목록에 남아 보이던 일이 실제로 있었습니다. 주문 직후에는
+        # 체결이 잡힐 때까지 짧게 다시 확인합니다.
+        self.assertEqual(board.wait_before_asking({"확인필요": True}), board.AFTER_ORDER)
+        self.assertEqual(board.wait_before_asking({"확인필요": False}), board.STALE)
+        self.assertEqual(board.wait_before_asking({}), board.STALE)
+        self.assertLess(board.AFTER_ORDER, board.STALE)
 
     def test_board_does_not_let_a_stock_name_become_html(self):
         # 종목 이름은 NH가 준 글자입니다. 그대로 넣으면 화면이 깨집니다.
