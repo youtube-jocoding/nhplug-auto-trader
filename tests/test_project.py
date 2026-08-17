@@ -447,12 +447,21 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertIn("trade.py --scan", text)
         self.assertIn("trade.py --do", text)
         self.assertIn("news.google.com", text)
-        page = setup.PAGE.replace("%%SCHEDULE%%", text)
+        page = setup.PAGE.replace("%%SCHEDULE%%", text).replace("%%POINTER%%", setup.POINTER)
         self.assertIn("trade.py --scan", page)
         self.assertNotIn("%%SCHEDULE%%", page)
+        self.assertNotIn("%%POINTER%%", page)
         # README는 이 파일을 가리키기만 해야 합니다. 본문을 베껴 두면 또 어긋납니다.
         readme = (Path(setup.__file__).with_name("README.md")).read_text(encoding="utf-8")
         self.assertIn("schedule.txt", readme)
+
+    def test_the_schedule_entry_points_at_the_file_instead_of_copying_it(self):
+        # 예약 칸에 본문을 붙여 넣으면, 시키는 내용이 바뀔 때마다 사람이 예약을
+        # 다시 고쳐야 합니다. 실제로 두 번 그랬습니다. 파일을 읽게 시킵니다.
+        self.assertIn("schedule.txt", setup.POINTER)
+        self.assertLess(len(setup.POINTER), 200)
+        # 파일을 못 찾았을 때 알아서 매매를 지어내면 안 됩니다.
+        self.assertIn("아무것도 하지 말고", setup.POINTER)
 
     def test_setup_page_script_has_no_broken_string(self):
         # PAGE는 파이썬 """...""" 안에 있어서 \n 을 그대로 쓰면 진짜 줄바꿈이 되어

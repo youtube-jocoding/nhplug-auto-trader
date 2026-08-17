@@ -25,6 +25,15 @@ ENV = HERE / ".env"
 SCHEDULE = HERE / "schedule.txt"
 
 
+# 예약 칸에 넣을 글. 본문을 통째로 붙여 넣으면 schedule.txt 가 바뀔 때마다 사람이
+# 예약을 다시 고쳐야 합니다. 예약이 그 파일을 읽게 해 두면 git pull 만으로 따라옵니다.
+# 파일을 못 찾았을 때 알아서 지어내지 않게 하는 것이 중요합니다.
+POINTER = """이 폴더의 schedule.txt 파일을 읽고, 거기 적힌 대로 그대로 해.
+
+그 파일에 없는 일은 하지 마. 파일을 못 찾으면 아무것도 하지 말고
+"schedule.txt 를 못 찾았다"고만 알려 줘."""
+
+
 def schedule_text():
     """예약에 넣을 글. 파일 하나에만 둬서 화면과 README가 어긋나지 않게 합니다."""
     try:
@@ -242,7 +251,14 @@ td.down{color:#1552c7}
   <p class="help">터미널에 프로그램을 띄워 놓지 않습니다. <b>Codex 앱 → 예약</b>에서
     <b>1시간 간격</b>으로 새 작업을 만들고, 아래 내용을 그대로 넣으세요.
     실행 위치는 <b>이 기기</b>로 둡니다.</p>
-  <pre id="cmd">%%SCHEDULE%%</pre>
+  <pre id="cmd">%%POINTER%%</pre>
+  <p class="help">이게 전부입니다. 시키는 내용은 <code>schedule.txt</code>에 있고 예약은 그걸
+    읽어서 합니다. 그래서 <b>내용이 바뀌어도 예약은 다시 안 고쳐도 됩니다.</b>
+    <code>git pull</code> 만 하면 다음 회차부터 새 내용으로 돕니다.</p>
+  <details style="margin-bottom:12px">
+    <summary style="cursor:pointer;font-size:.9rem">예약이 실제로 하는 일 보기</summary>
+    <pre style="margin-top:10px">%%SCHEDULE%%</pre>
+  </details>
   <p class="help">장이 닫혀 있으면 <code>--scan</code>이 곧바로 끝납니다.
     멈추고 싶으면 예약을 <b>일시 중지</b>하면 됩니다.</p>
   <button class="ghost" onclick="dryrun()" id="d-btn">먼저 한 번만 확인해보기 (주문 안 함)</button>
@@ -531,7 +547,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         page = PAGE.replace("%%PROMPT%%", json.dumps(CODEX_PROMPT, ensure_ascii=False))
         # 예약에 넣을 글은 schedule.txt 한 곳에만 둡니다. 화면과 README가 따로
         # 적혀 있으면 언젠가 서로 어긋납니다.
-        page = page.replace("%%SCHEDULE%%", schedule_text())
+        page = page.replace("%%SCHEDULE%%", schedule_text()).replace("%%POINTER%%", POINTER)
         # 열쇠말을 쿠키로 옮겨 둡니다. 이후 버튼(POST)마다 주소에 붙이지 않아도
         # 되고, 주소창을 실수로 복사해 남길 일도 줄어듭니다.
         self._send(page, "text/html", cookie=getattr(self.server, "token", None))
