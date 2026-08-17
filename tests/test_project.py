@@ -254,6 +254,30 @@ class IntegrationHelpersTests(unittest.TestCase):
         saturday = datetime.datetime(2026, 8, 15, 3, 0, tzinfo=datetime.timezone.utc)
         self.assertFalse(trade.kr_open(saturday))
 
+    def test_us_stocks_are_watched_only_in_the_sessions_the_strategy_chose(self):
+        # 프리마켓에도 주문은 들어가지만 지표는 아직 어제 일봉입니다. 언제 볼지는
+        # 상담에서 정하고, 안 정했으면 정규장만 봅니다.
+        def looked_at(session, **chosen):
+            with (
+                mock.patch.object(broker, "us_session", return_value=session),
+                mock.patch.object(trade, "kr_open", return_value=False),
+                mock.patch.object(strategy, "US_SYMBOLS", ["MSFT"]),
+                mock.patch.object(strategy, "SYMBOLS", []),
+                mock.patch.object(strategy, "US_SESSIONS", **chosen),
+            ):
+                return trade.targets()
+
+        # 상담에서 아무 말 없었으면 정규장만.
+        for session in ("pre", "after", "closed"):
+            self.assertEqual(looked_at(session, create=True, new=None), [])
+        self.assertEqual(looked_at("regular", create=True, new=None), [("us", "MSFT")])
+        # 상담에서 프리마켓까지 하기로 했으면 그때만 봅니다.
+        self.assertEqual(looked_at("pre", new=["pre", "regular"]), [("us", "MSFT")])
+        self.assertEqual(looked_at("after", new=["pre", "regular"]), [])
+        # 이상한 값이 적혀 있어도 장이 닫힌 시간에 깨어나지는 않습니다.
+        self.assertEqual(looked_at("closed", new=["언제나", "closed"]), [])
+        self.assertEqual(looked_at("regular", new=[]), [("us", "MSFT")])
+
     def test_scan_says_in_words_what_happened(self):
         # "판단해줘가 비어 있습니다"만 보면 무슨 뜻인지 알 수 없습니다.
         self.assertIn("사고팔지 정해 주세요", trade.summary([], [], [{"이름": "삼성전자"}]))

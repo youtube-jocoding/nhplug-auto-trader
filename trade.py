@@ -59,12 +59,26 @@ def kr_open(now=None):
     return now.replace(hour=9, minute=0) <= now <= now.replace(hour=15, minute=20)
 
 
+US_ALL_SESSIONS = ("pre", "regular", "after")
+
+
+def us_sessions():
+    """미국 주식을 볼 시간대. 전략이 정하고, 안 정했으면 정규장에서만 봅니다.
+
+    프리마켓·애프터마켓에도 주문은 들어갑니다(지정가만). 다만 호가가 얇아 원하는
+    값에 안 걸리고, 지표는 일봉이라 아직 어제 것입니다. 신선한 가격에 어제 지표를
+    겹쳐 놓고 판단하게 되므로 기본은 정규장입니다. 상담에서 바꿉니다.
+    """
+    chosen = getattr(strategy, "US_SESSIONS", None) or ["regular"]
+    return [name for name in chosen if name in US_ALL_SESSIONS] or ["regular"]
+
+
 def targets():
     """오늘 볼 (시장, 종목) 목록. 장이 닫힌 시장은 아예 넣지 않습니다."""
     items = []
     if kr_open():
         items += [("kr", code) for code in strategy.SYMBOLS]
-    if getattr(strategy, "US_SYMBOLS", []) and broker.us_session() != "closed":
+    if getattr(strategy, "US_SYMBOLS", []) and broker.us_session() in us_sessions():
         items += [("us", ticker) for ticker in strategy.US_SYMBOLS]
     return items
 

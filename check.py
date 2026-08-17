@@ -148,6 +148,14 @@ def main():
         fail("MAX_HOLDINGS는 1 이상이어야 합니다.")
     if namespace["BUY_AMOUNT"] < 1 or namespace["US_BUY_AMOUNT"] < 1:
         fail("한 종목에 넣을 금액은 1 이상이어야 합니다.")
+
+    # 미국 주식을 언제 볼지. 안 정했으면 정규장만 봅니다.
+    sessions = namespace.get("US_SESSIONS", ["regular"])
+    if not isinstance(sessions, (list, tuple)) or not sessions:
+        fail('US_SESSIONS는 비어 있지 않은 리스트여야 합니다. 예: ["regular"]')
+    for name in sessions:
+        if name not in ("pre", "regular", "after"):
+            fail(f'US_SESSIONS에는 "pre", "regular", "after"만 넣습니다: {name!r}')
     if not callable(namespace.get("decide")):
         fail("decide 함수가 없습니다.")
 
@@ -192,6 +200,9 @@ def main():
     print("통과했습니다.")
     print(f"  국내 {', '.join(kr) or '안 함'} · 종목당 {namespace['BUY_AMOUNT']:,}원")
     print(f"  미국 {', '.join(us) or '안 함'} · 종목당 ${namespace['US_BUY_AMOUNT']:,}")
+    if us:
+        when = {"pre": "프리마켓", "regular": "정규장", "after": "애프터마켓"}
+        print(f"  미국을 볼 시간대 {' · '.join(when[name] for name in sessions)}")
     print(f"  최대 {namespace['MAX_HOLDINGS']}종목")
 
 
