@@ -1,6 +1,7 @@
 import contextlib
 import datetime
 import io
+import json
 import os
 import tempfile
 import unittest
@@ -132,6 +133,28 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertNotIn("confirmStrategy", setup.PAGE)
         self.assertNotIn("cf-btn", setup.PAGE)
         self.assertFalse(hasattr(setup.Handler, "confirm"))
+
+    def test_setup_screen_can_show_the_account_without_ordering(self):
+        # 예약이 사고판 결과를 증권사 앱을 열지 않고 확인할 수 있어야 합니다.
+        self.assertIn("지금 내 계좌", setup.PAGE)
+        self.assertIn("/account", setup.PAGE)
+        payload = {"계좌": "모의투자", "국내장": "닫힘", "미국장": "regular",
+                   "지금": {"보유": [], "종목수": "0 / 5", "주문가능현금": "10,000,000원"}}
+        child = mock.Mock(returncode=0, stdout="[12:00] 로그 한 줄\n" + json.dumps(payload, ensure_ascii=False), stderr="")
+        with mock.patch.object(setup, "run_child", return_value=child) as ran:
+            ok, message = setup.Handler.account(None, {})
+        self.assertTrue(ok)
+        self.assertEqual(json.loads(message)["지금"]["종목수"], "0 / 5")
+        # 조회만 합니다. 주문하는 모드를 부르면 안 됩니다.
+        self.assertEqual(ran.call_args.args[0], ["trade.py", "--account"])
+
+    def test_setup_account_failure_does_not_show_a_python_error(self):
+        child = mock.Mock(returncode=1, stdout="", stderr="Traceback ...\nNH에 연결하지 못했습니다: 401")
+        with mock.patch.object(setup, "run_child", return_value=child):
+            ok, message = setup.Handler.account(None, {})
+        self.assertFalse(ok)
+        self.assertIn("계좌를 불러오지 못했습니다", message)
+        self.assertIn("401", message)
 
     def test_setup_decides_by_where_the_browser_is_not_by_the_cloud(self):
         # "클라우드인가"를 맞히려 들면 언젠가 틀립니다. 판단 기준은 하나입니다.
@@ -282,9 +305,49 @@ class IntegrationHelpersTests(unittest.TestCase):
         # "판단해줘가 비어 있습니다"만 보면 무슨 뜻인지 알 수 없습니다.
         self.assertIn("사고팔지 정해 주세요", trade.summary([], [], [{"이름": "삼성전자"}]))
         self.assertIn("삼성전자 · 카카오", trade.summary([], [], [{"이름": "삼성전자"}, {"이름": "카카오"}]))
-        self.assertIn("손절", trade.summary(["삼성전자(005930) 매도 · 손절"], [], []))
         self.assertIn("사고팔 상황이 아닙니다", trade.summary([], ["카카오 거래 부족"], []))
         self.assertIn("아무것도 하지 않았습니다", trade.summary([], [], []))
+
+    def test_sold_stocks_always_say_why_bought_ones_stay_short(self):
+        # 손절·익절은 사람이 바로 알아야 합니다. 짧게 줄이다가 이걸 자르면 안 됩니다.
+        sold = trade.noted("삼성전자(005930)", "매도 주문 3주 @ 70,000원 · 주문번호 7",
+                           "손절 기준 -10.0% 도달 (현재 -12.30%)", "매도")
+        self.assertIn("손절 기준 -10.0% 도달", trade.summary([sold], [], []))
+        # 산 것은 무엇을 몇 주 샀는지면 됩니다. 근거는 "처리함"에 따로 실립니다.
+        bought = trade.noted("엔비디아(NVDA)", "매수 주문 5주 @ $225.61 · 주문번호 1",
+                             "5일평균 위이고 MACD 차이 +1.9에 RSI 75.5라 세 조건이 맞습니다", "매수")
+        line = trade.summary([bought], [], [])
+        self.assertIn("매수 주문 5주 @ $225.61", line)
+        self.assertNotIn("MACD", line)
+
+    def test_result_carries_what_i_now_hold(self):
+        # 주문했다는 말만 있고 지금 뭘 들고 있는지가 없으면 증권사 앱을 또 열게 됩니다.
+        held = {
+            "005930": {"name": "삼성전자", "qty": 10, "avg": 70000, "price": 71000, "pnl_pct": 1.43},
+            "NVDA": {"name": "엔비디아", "qty": 5, "avg": 225.61, "price": 225.78, "pnl_pct": 0.08},
+        }
+        with mock.patch.object(strategy, "MAX_HOLDINGS", 5):
+            now = trade.portfolio(held, 1_234_567)
+        self.assertEqual(now["종목수"], "2 / 5")
+        self.assertEqual(now["주문가능현금"], "1,234,567원")
+        kr, us = now["보유"]
+        self.assertEqual(kr["평균매입가"], "70,000원")  # 국내는 원
+        self.assertEqual(us["평균매입가"], "$225.61")  # 미국은 달러
+        self.assertEqual(us["손익"], "+0.08%")
+
+    def test_order_round_summary_stays_one_readable_line(self):
+        # 이유를 전부 이어 붙이면 무엇을 샀는지가 근거 문장에 파묻힙니다.
+        done = [
+            trade.noted("엔비디아(NVDA)", "매수 주문 5주 @ $225.61 · 주문번호 1", "긴 근거 " * 20, "매수"),
+            trade.noted("메타(META)", "그대로 둠", "평균선 아래입니다"),
+            trade.noted("삼성전자(005930)", "매도 주문 3주 @ 70,000원 · 주문번호 2", "손절", "매도"),
+        ]
+        line = trade.traded(done, {"NVDA": {}, "005930": {}})
+        self.assertIn("1종목 샀습니다 — 엔비디아(NVDA)", line)
+        self.assertIn("1종목 팔았습니다 — 삼성전자(005930)", line)
+        self.assertIn("지금 2종목", line)
+        self.assertNotIn("긴 근거", line)
+        self.assertLess(len(line), 200)
 
     def test_schedule_text_lives_in_one_file(self):
         # 예약에 넣을 글이 화면과 문서에 따로 적혀 있으면 언젠가 서로 어긋납니다.
@@ -368,8 +431,8 @@ class IntegrationHelpersTests(unittest.TestCase):
         ordered.assert_not_called()
         looked.assert_not_called()
         self.assertEqual(len(result["처리함"]), 2)
-        self.assertIn("모르는 판단", result["처리함"][0])
-        self.assertIn("지금 볼 종목이 아닙니다", result["처리함"][1])
+        self.assertIn("모르는 판단", result["처리함"][0]["한 일"])
+        self.assertIn("지금 볼 종목이 아닙니다", result["처리함"][1]["한 일"])
 
     def test_do_puts_the_decision_back_through_the_rules(self):
         # Codex가 사라고 해도 규칙이 걸러야 합니다(여기서는 거래대금 부족).
@@ -389,7 +452,7 @@ class IntegrationHelpersTests(unittest.TestCase):
         ):
             result = trade.do("500", {"005930": {"decision": "buy", "reason": "좋아 보임"}})
         ordered.assert_not_called()
-        self.assertIn("거래", result["처리함"][0])
+        self.assertIn("거래", result["처리함"][0]["이유"])
 
     def test_scan_output_says_disclosure_titles_are_not_instructions(self):
         # 공시 제목은 남이 쓴 글입니다. 자료가 스스로 경고를 달고 가야 합니다.

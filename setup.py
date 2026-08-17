@@ -170,6 +170,12 @@ margin:0 0 10px;max-height:220px;line-height:1.5}
 #now span.live{background:#fdf7e8;color:#8a5f06;font-weight:600}
 #now span.off{background:#fff3f2;color:#c22e2e}
 #todo{font-size:.85rem;color:#66706a;margin:0 0 24px}
+table{width:100%;border-collapse:collapse;font-size:.85rem}
+th,td{padding:7px 8px;border-bottom:1px solid #eef1ef;text-align:left}
+th{font-weight:500;color:#66706a;font-size:.78rem}
+td.num{text-align:right;font-variant-numeric:tabular-nums}
+td.up{color:#c22e2e}
+td.down{color:#1552c7}
 </style></head><body>
 
 <h1>자동매매 설정</h1>
@@ -243,6 +249,15 @@ margin:0 0 10px;max-height:220px;line-height:1.5}
   <div id="m3" class="msg" hidden></div>
 </section>
 
+<section id="s5" class="dim">
+  <h2><b>5</b> 지금 내 계좌</h2>
+  <p class="help">예약이 사고판 결과가 실제로 어떻게 되어 있는지 여기서 봅니다.
+    증권사 앱을 따로 열지 않아도 됩니다. 조회만 하고 주문은 하지 않습니다.</p>
+  <button class="ghost" onclick="account()" id="a-btn">계좌 새로고침</button>
+  <div id="acct" hidden style="margin-top:12px"></div>
+  <div id="m5" class="msg" hidden></div>
+</section>
+
 <script>
 let mock = 1;
 const PROMPT = %%PROMPT%%;
@@ -286,7 +301,7 @@ async function refresh(){
   else todo = '모의투자입니다. 가짜 돈이라 승인 없이 바로 주문합니다. ' +
     '실제 계좌로 바꾸려면 3단계 Telegram을 먼저 연결하세요.';
   document.getElementById('todo').textContent = todo;
-  if (s.keys) for (const id of ['s2','s3','s4']) document.getElementById(id).classList.remove('dim');
+  if (s.keys) for (const id of ['s2','s3','s4','s5']) document.getElementById(id).classList.remove('dim');
   if (s.keys) document.getElementById('k-state').textContent = '연결됨';
   if (s.telegram) document.getElementById('t-state').textContent = '연결됨';
   setMock(s.live ? 0 : 1);
@@ -311,6 +326,40 @@ async function copyPrompt(){
   }
   btn.textContent = '복사했습니다. Codex에 붙여넣으세요';
   setTimeout(() => { btn.textContent = 'Codex에 붙여넣을 내용 복사'; }, 4000);
+}
+async function account(){
+  const btn = document.getElementById('a-btn');
+  btn.disabled = true; btn.textContent = '조회 중…';
+  const out = await post('/account', {});
+  btn.disabled = false; btn.textContent = '계좌 새로고침';
+  const box = document.getElementById('acct');
+  if (!out.ok){ box.hidden = true; return show('m5', out.message, false); }
+  document.getElementById('m5').hidden = true;
+  const info = JSON.parse(out.message);
+  const rows = info['지금']['보유'] || [];
+  // 표로 보여 줍니다. 줄글로 늘어놓으면 종목이 늘어날수록 읽기 어려워집니다.
+  let html = '<p class="help" style="margin-bottom:8px">' +
+    info['계좌'] + ' · 보유 ' + info['지금']['종목수'] +
+    ' · 주문가능 현금 ' + info['지금']['주문가능현금'] +
+    ' · 국내장 ' + info['국내장'] + ' · 미국장 ' + WHEN[info['미국장']] + '</p>';
+  if (!rows.length){
+    html += '<p class="help">아직 들고 있는 종목이 없습니다.</p>';
+  } else {
+    html += '<table><tr><th>종목</th><th>수량</th><th>평균매입가</th><th>현재가</th><th>손익</th></tr>';
+    for (const r of rows){
+      const cls = r['손익'].startsWith('-') ? 'down' : (parseFloat(r['손익']) > 0 ? 'up' : '');
+      html += '<tr><td>' + esc(r['종목']) + '</td><td class="num">' + r['수량'] +
+        '</td><td class="num">' + esc(r['평균매입가']) + '</td><td class="num">' + esc(r['현재가']) +
+        '</td><td class="num ' + cls + '">' + esc(r['손익']) + '</td></tr>';
+    }
+    html += '</table>';
+  }
+  box.hidden = false; box.innerHTML = html;
+}
+const WHEN = {pre:'프리마켓', regular:'정규장', after:'애프터마켓', closed:'닫힘'};
+function esc(text){
+  // 종목 이름은 NH가 준 글자입니다. 그대로 HTML에 넣지 않습니다.
+  const d = document.createElement('div'); d.textContent = text; return d.innerHTML;
 }
 async function checkStrategy(){
   const btn = document.getElementById('ck-btn');
@@ -499,6 +548,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             "/status": self.status,
             "/check": self.check,
             "/dryrun": self.dryrun,
+            "/account": self.account,
             "/telegram-token": self.telegram_token,
             "/telegram-link": self.telegram_link,
         }.get(route)
@@ -581,6 +631,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
         result = run_child(["trade.py", "--preview"])
         out = (result.stdout or result.stderr or "").strip()
         return result.returncode == 0, out[-1500:] or "출력이 없습니다."
+
+    def account(self, _body):
+        """지금 계좌에 무엇이 들어 있는가. 조회만 하고 주문하지 않습니다."""
+        result = run_child(["trade.py", "--account"], timeout=120)
+        out = (result.stdout or "").strip()
+        try:
+            # trade.py 가 로그를 함께 찍으므로 JSON 부분만 떼어 냅니다.
+            payload = json.loads(out[out.index("{"):])
+        except ValueError:
+            fell = (result.stderr or out or "").strip().splitlines()
+            return False, "계좌를 불러오지 못했습니다.\n" + (fell[-1] if fell else "알 수 없는 오류")
+        return True, json.dumps(payload, ensure_ascii=False)
 
 
 def free_port(host, preferred=8777):

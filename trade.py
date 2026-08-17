@@ -205,11 +205,36 @@ def scan(act, dry=False):
         "요약": summary(done, skipped, ask),
         "장": "열림",
         "계좌": "모의투자" if broker.MOCK else "실제 계좌",
+        "지금": portfolio(held, cash),
         "처리함": done,
         "건너뜀": skipped,
         "판단해줘": ask,
         "투자원칙": (getattr(strategy, "INSTRUCTIONS", "") or "").strip(),
         "주의": WARNING,
+    }
+
+
+def portfolio(held, cash):
+    """지금 무엇을 얼마나 들고 있는가.
+
+    주문했다는 말만 있고 그래서 지금 뭘 들고 있는지가 없으면, 사람은 결국
+    증권사 앱을 따로 열어 봐야 합니다. 결과에 이것을 같이 실어 보냅니다.
+    """
+    rows = []
+    for code, item in sorted(held.items()):
+        # 국내는 6자리 숫자, 미국은 영문 티커입니다. 통화를 여기서 가릅니다.
+        currency = "KRW" if code.isdigit() else "USD"
+        rows.append({
+            "종목": f"{item['name']}({code})",
+            "수량": item["qty"],
+            "평균매입가": money(item["avg"], currency),
+            "현재가": money(item["price"], currency),
+            "손익": f"{item['pnl_pct']:+.2f}%",
+        })
+    return {
+        "보유": rows,
+        "종목수": f"{len(held)} / {strategy.MAX_HOLDINGS}",
+        "주문가능현금": f"{cash:,}원",
     }
 
 
@@ -221,7 +246,13 @@ def summary(done, skipped, ask):
     """
     said = []
     if done:
-        said.append(" / ".join(done))
+        # 판 것은 **왜** 팔았는지가 중요합니다(손절·익절은 바로 알아야 합니다).
+        # 산 것은 무엇을 몇 주 샀는지면 충분하고, 근거는 따로 실려 갑니다.
+        said.append(" / ".join(
+            f"{item['종목']} {item['한 일']}"
+            + (f" · {item['이유']}" if item.get("구분") == "매도" and item.get("이유") else "")
+            for item in done
+        ))
     if ask:
         names = " · ".join(item["이름"] for item in ask)
         said.append(f"{names} — 이 {len(ask)}종목은 사고팔지 정해 주세요")
@@ -268,15 +299,28 @@ def facts(m):
     return out
 
 
+def noted(where, did, reason="", kind="그대로"):
+    """한 종목에 무슨 일이 있었는가. **한 일과 이유를 한 줄에 섞지 않습니다.**
+
+    섞어 놓으면 예약이 그 줄을 통째로 사람에게 옮깁니다. 그러면 근거 문장이
+    화면을 덮어서, 정작 무엇을 몇 주 샀는지가 안 보입니다.
+    """
+    out = {"종목": where, "한 일": did, "구분": kind}
+    if reason:
+        out["이유"] = reason
+    return out
+
+
 def execute(act, m, held, action, reason, dry=False):
-    """한 종목을 실제로 주문합니다. 무슨 일이 있었는지 한 줄로 돌려줍니다."""
+    """한 종목을 실제로 주문합니다. 무슨 일이 있었는지 항목으로 돌려줍니다."""
     where = f"{m['name']}({m['code']})"
+    kind = "매수" if action == "buy" else "매도"
     log(f"  {where} {money(m['price'], m['currency'])} → {action} · {reason}")
     if dry:
-        return f"{where} {action} 했을 것 · {reason} (확인용이라 주문하지 않음)"
+        return noted(where, f"{kind} 했을 것 (확인용이라 주문하지 않음)", reason)
     if _too_soon(m["code"], action):
         log("    조금 전에 시도한 종목이라 이번에는 건너뜁니다")
-        return f"{where} 건너뜀 · 조금 전에 이미 시도했습니다"
+        return noted(where, "건너뜀 · 조금 전에 이미 시도했습니다", reason)
 
     # NH가 주문을 거절하는 이유는 많습니다(휴장일, 증거금 부족, 거래정지 …).
     # 한 종목이 거절당했다고 나머지 종목까지 못 보면 안 되므로, 여기서 받아
@@ -285,8 +329,11 @@ def execute(act, m, held, action, reason, dry=False):
         note = buy(act, m, held, reason) if action == "buy" else sell(act, m, reason)
     except Exception as exc:
         log(f"    주문하지 못했습니다: {exc}")
-        return f"{where} 주문 실패 · {exc}"
-    return f"{where} {note or action} · {reason}"
+        return noted(where, f"주문 실패 · {exc}", reason)
+    # 주문이 실제로 나갔을 때만 매수·매도로 셉니다. buy()·sell()이 "최대 종목 수"
+    # 같은 이유로 그냥 돌아왔으면 산 것이 아닙니다.
+    sent = "주문번호" in (note or "")
+    return noted(where, note or action, reason, kind if sent else "안 함")
 
 
 def _too_soon(code, action):
@@ -462,17 +509,17 @@ def do(act, calls):
     done = []
     for code, call in calls.items():
         if code not in work:
-            done.append(f"{code} 건너뜀 · 지금 볼 종목이 아닙니다")
+            done.append(noted(code, "건너뜀 · 지금 볼 종목이 아닙니다"))
             continue
         decision = call.get("decision") if isinstance(call, dict) else call
         reason = call.get("reason", "") if isinstance(call, dict) else ""
         if decision not in ("buy", "sell", "hold"):
-            done.append(f"{code} 건너뜀 · 모르는 판단 {decision!r}")
+            done.append(noted(code, f"건너뜀 · 모르는 판단 {decision!r}"))
             continue
         try:
             m = context(work[code], code, held, cash)
         except Exception as exc:
-            done.append(f"{code} 조회 실패 · {exc}")
+            done.append(noted(code, f"조회 실패 · {exc}"))
             continue
 
         # 판단을 규칙에 다시 통과시킵니다. 손절선·거래대금·52주가 여기서 또 걸립니다.
@@ -480,11 +527,34 @@ def do(act, calls):
         action, why = strategy.decide(m)
         if action == "hold":
             log(f"  {m['name']}({code}) hold · {why}")
-            done.append(f"{m['name']}({code}) 그대로 둠 · {why}")
+            done.append(noted(f"{m['name']}({code})", "그대로 둠", why))
             continue
         done.append(execute(act, m, held, action, why))
-    return {"요약": " / ".join(done) + "." if done else "주문할 것이 없었습니다.",
-            "장": "열림", "처리함": done}
+    return {
+        "요약": traded(done, held),
+        "장": "열림",
+        "계좌": "모의투자" if broker.MOCK else "실제 계좌",
+        "지금": portfolio(held, cash),
+        "처리함": done,
+    }
+
+
+def traded(done, held):
+    """주문 회차의 한 줄. 무엇을 샀고 무엇을 팔았고 지금 몇 종목인가.
+
+    이유는 여기에 넣지 않습니다. "처리함"에 종목별로 따로 실려 갑니다.
+    """
+    bought = [item["종목"] for item in done if item.get("구분") == "매수"]
+    sold = [item["종목"] for item in done if item.get("구분") == "매도"]
+    said = []
+    if bought:
+        said.append(f"{len(bought)}종목 샀습니다 — {' · '.join(bought)}")
+    if sold:
+        said.append(f"{len(sold)}종목 팔았습니다 — {' · '.join(sold)}")
+    if not said:
+        said.append("주문이 나간 것은 없습니다")
+    said.append(f"지금 {len(held)}종목 들고 있습니다")
+    return ". ".join(said) + "."
 
 
 def read_calls(argv):
@@ -505,6 +575,7 @@ USAGE = """이 프로그램은 Codex 예약이 1시간마다 부릅니다.
   python trade.py --scan   지금 상황을 살펴 판단이 필요한 종목을 알려 줍니다
   python trade.py --do ..  Codex가 정한 판단대로 주문합니다
   python trade.py --preview  아무것도 주문하지 않고 지금 상황만 보여 줍니다
+  python trade.py --account  지금 계좌에 무엇이 들어 있는지만 보여 줍니다
 
 예약을 아직 안 만들었다면 README의 "예약이 하는 일"을 보세요."""
 
@@ -512,7 +583,7 @@ USAGE = """이 프로그램은 Codex 예약이 1시간마다 부릅니다.
 def main():
     argv = sys.argv[1:]
     mode = argv[0] if argv else ""
-    if mode not in ("--scan", "--do", "--preview"):
+    if mode not in ("--scan", "--do", "--preview", "--account"):
         print(USAGE)
         return
 
@@ -524,7 +595,10 @@ def main():
         act = broker.account()
     except Exception as exc:
         log(f"NH에 연결하지 못했습니다: {exc}")
-        open_setup()
+        # --account 는 설정 화면이 스스로 부릅니다. 여기서 또 열면 설정 화면이
+        # 설정 화면을 띄우는 꼴이 됩니다.
+        if mode != "--account":
+            open_setup()
         return
 
     where = "모의투자" if broker.MOCK else "!!! 실제 돈 !!!"
@@ -532,7 +606,16 @@ def main():
     if len(found) > 1:
         log(f"  계좌가 {len(found)}개라 번호가 가장 빠른 것을 골랐습니다")
 
-    if mode == "--do":
+    if mode == "--account":
+        # 장이 열렸는지와 상관없이 계좌만 봅니다. 주문은 하지 않습니다.
+        held = {**broker.holdings(act), **broker.us_holdings(act)}
+        result = {
+            "계좌": "모의투자" if broker.MOCK else "실제 계좌",
+            "지금": portfolio(held, broker.cash(act)),
+            "미국장": broker.us_session(),
+            "국내장": "열림" if kr_open() else "닫힘",
+        }
+    elif mode == "--do":
         try:
             calls = read_calls(argv[1:])
         except ValueError as exc:
