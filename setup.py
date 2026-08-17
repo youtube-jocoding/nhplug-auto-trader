@@ -8,6 +8,8 @@
 import http.server
 import json
 import os
+import secrets
+import shutil
 import socket
 import subprocess
 import sys
@@ -429,22 +431,52 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass  # 브라우저 요청 로그로 화면을 채우지 않습니다.
 
-    def _send(self, body, kind="application/json"):
+    def _send(self, body, kind="application/json", status=200, cookie=None):
         raw = body.encode("utf-8")
-        self.send_response(200)
+        self.send_response(status)
         self.send_header("Content-Type", f"{kind}; charset=utf-8")
         self.send_header("Content-Length", str(len(raw)))
+        if cookie:
+            self.send_header("Set-Cookie", f"nh_setup={cookie}; Path=/; SameSite=Strict")
         self.end_headers()
         self.wfile.write(raw)
 
+    def allowed(self):
+        """127.0.0.1로 열었으면 누구나(=나만) 씁니다.
+
+        --public 으로 열었을 때만 열쇠말을 받습니다. 이 화면은 .env를 고치고
+        파이썬을 실행하므로, 바깥에 열어 둔 채 아무나 들어오게 두면 안 됩니다.
+        """
+        token = getattr(self.server, "token", None)
+        if not token:
+            return True
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        given = query.get("t", [""])[0] or self._cookie_token()
+        # 바이트로 비교합니다. 한글 같은 글자가 섞여 들어와도 예외 대신 403이어야
+        # 합니다(compare_digest는 비ASCII 문자열을 받지 않습니다).
+        return secrets.compare_digest(given.encode("utf-8"), token.encode("utf-8"))
+
+    def _cookie_token(self):
+        for part in (self.headers.get("Cookie") or "").split(";"):
+            name, sep, value = part.strip().partition("=")
+            if sep and name == "nh_setup":
+                return value
+        return ""
+
     def do_GET(self):
+        if not self.allowed():
+            return self._send("주소 끝의 열쇠말이 없거나 틀렸습니다.", "text/plain", 403)
         page = PAGE.replace("%%PROMPT%%", json.dumps(CODEX_PROMPT, ensure_ascii=False))
         # 예약에 넣을 글은 schedule.txt 한 곳에만 둡니다. 화면과 README가 따로
         # 적혀 있으면 언젠가 서로 어긋납니다.
         page = page.replace("%%SCHEDULE%%", schedule_text())
-        self._send(page, "text/html")
+        # 열쇠말을 쿠키로 옮겨 둡니다. 이후 버튼(POST)마다 주소에 붙이지 않아도
+        # 되고, 주소창을 실수로 복사해 남길 일도 줄어듭니다.
+        self._send(page, "text/html", cookie=getattr(self.server, "token", None))
 
     def do_POST(self):
+        if not self.allowed():
+            return self._send(json.dumps({"ok": False, "message": "다시 접속해 주세요."}), status=403)
         length = int(self.headers.get("Content-Length") or 0)
         try:
             body = json.loads(self.rfile.read(length) or b"{}")
@@ -540,28 +572,193 @@ class Handler(http.server.BaseHTTPRequestHandler):
         return result.returncode == 0, out[-1500:] or "출력이 없습니다."
 
 
-def free_port(preferred=8777):
+def free_port(host, preferred=8777):
     for candidate in (preferred, 0):
         with socket.socket() as probe:
             try:
-                probe.bind(("127.0.0.1", candidate))
+                probe.bind((host, candidate))
                 return probe.getsockname()[1]
             except OSError:
                 continue
     raise SystemExit("빈 포트를 찾지 못했습니다.")
 
 
+def has_browser():
+    """이 컴퓨터에서 브라우저를 띄울 수 있는가.
+
+    서버(SSH로 들어온 리눅스)에는 브라우저가 없습니다. 그런데도 열었다고 말하면
+    사용자는 열리지 않는 127.0.0.1을 하염없이 기다리게 됩니다.
+    """
+    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
+        return False
+    if sys.platform.startswith("linux") and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return False
+    try:
+        webbrowser.get()
+        return True
+    except webbrowser.Error:
+        return False
+
+
+def ssh_peer():
+    """SSH로 들어와 있다면 (내 PC 주소, 이 서버 주소). 아니면 (None, None)."""
+    parts = (os.environ.get("SSH_CONNECTION") or "").split()
+    return (parts[0], parts[2]) if len(parts) >= 4 else (None, None)
+
+
+def my_address():
+    """안내문에 쓸 이 서버의 주소. 바깥으로 나가는 소켓의 내 쪽 주소를 봅니다."""
+    _, here = ssh_peer()
+    if here:
+        return here
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+            probe.connect(("8.8.8.8", 53))  # 실제로 패킷이 나가지는 않습니다
+            return probe.getsockname()[0]
+    except OSError:
+        return "서버주소"
+
+
+def ufw(*args):
+    """방화벽 명령 한 번. ufw가 없거나 권한이 없으면 None."""
+    if shutil.which("ufw") is None:
+        return None
+    command = ["ufw", *args]
+    if hasattr(os, "geteuid") and os.geteuid() != 0:
+        command = ["sudo", "-n", *command]
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=20)
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def firewall_open(port, only_from=None):
+    """켜져 있는 ufw에 이 포트를 잠깐 엽니다. 되돌릴 규칙을 돌려줍니다.
+
+    사용자가 방화벽 명령을 외우게 하지 않으려는 것입니다. 열어 둔 채 잊어버리는
+    쪽이 더 위험하므로, 끝날 때 같은 규칙을 반드시 지웁니다(firewall_close).
+    """
+    status = ufw("status")
+    if status is None or status.returncode != 0:
+        return None
+    if "Status: active" not in (status.stdout or ""):
+        return None  # 방화벽이 꺼져 있으면 건드릴 것이 없습니다.
+    rule = (
+        ["allow", "from", only_from, "to", "any", "port", str(port), "proto", "tcp"]
+        if only_from
+        else ["allow", f"{port}/tcp"]
+    )
+    done = ufw(*rule)
+    return rule if done is not None and done.returncode == 0 else None
+
+
+def firewall_close(rule):
+    if rule:
+        ufw("delete", *rule)
+
+
+USAGE = """python setup.py            내 컴퓨터에서 (브라우저가 저절로 열립니다)
+python setup.py --public   서버에서, SSH 터널을 쓸 수 없을 때만
+    --port 8777            쓸 포트
+    --minutes 30           이 시간이 지나면 스스로 닫습니다"""
+
+
+def parse_args(argv):
+    opts = {"public": False, "port": 8777, "minutes": 30}
+    rest = iter(argv)
+    for arg in rest:
+        if arg == "--public":
+            opts["public"] = True
+        elif arg in ("--port", "--minutes"):
+            try:
+                opts[arg[2:]] = int(next(rest, ""))
+            except ValueError:
+                raise SystemExit(f"{arg} 뒤에는 숫자를 적어 주세요.")
+        elif arg in ("-h", "--help"):
+            raise SystemExit(USAGE)
+        else:
+            raise SystemExit(f"모르는 옵션입니다: {arg}\n\n{USAGE}")
+    return opts
+
+
+def tunnel_guide(port):
+    """서버에는 브라우저가 없습니다. 내 PC의 브라우저를 빌려 쓰는 법."""
+    user = os.environ.get("USER") or os.environ.get("LOGNAME") or "root"
+    return (
+        "이 서버에는 브라우저가 없습니다. 설정 화면은 켜져 있고, 서버 안에서만 보입니다.\n"
+        "\n"
+        "  ① 내 PC(노트북)에서 터미널을 새로 열고 아래 한 줄을 실행하세요. 창은 켜 둡니다.\n"
+        f"\n     ssh -N -L {port}:127.0.0.1:{port} {user}@{my_address()}\n\n"
+        f"  ② 내 PC 브라우저에서 http://127.0.0.1:{port} 을 엽니다.\n"
+        "\n"
+        "포트를 열 필요도, 방화벽을 만질 필요도 없습니다. 키는 SSH 안으로만 지나갑니다.\n"
+        "내 PC에서 SSH를 못 쓴다면(웹 콘솔뿐이라면) 다음으로 다시 실행하세요:\n"
+        "\n     python setup.py --public\n"
+    )
+
+
+def public_guide(url, port, minutes, rule, only_from):
+    who = f"{only_from} 에서만" if only_from else "아무 주소에서나"
+    lines = [
+        "설정 화면을 이 서버 주소로 잠깐 열었습니다. 아래 주소로 접속하세요.",
+        "",
+        f"     {url}",
+        "",
+        "주소 끝의 열쇠말까지 통째로 복사해야 열립니다.",
+        f"{minutes}분이 지나면 스스로 닫습니다. 다 끝냈으면 Ctrl+C 로 바로 닫아 주세요.",
+    ]
+    if rule:
+        lines.append(f"방화벽(ufw)은 이 포트를 {who} 열어 두었고, 닫을 때 되돌립니다.")
+    else:
+        lines += [
+            "",
+            "열리지 않으면 방화벽이 막고 있는 것입니다. 서버에서 한 줄:",
+            f"     sudo ufw allow {port}/tcp",
+            "DigitalOcean은 웹 화면의 Networking → Firewalls 도 함께 봐야 합니다.",
+        ]
+    lines += [
+        "",
+        "※ 이 길은 암호화되지 않은 http 입니다. 키를 넣는 잠깐만 열어 두세요.",
+        "  가능하면 SSH 터널(python setup.py)을 쓰는 편이 안전합니다.",
+    ]
+    return "\n".join(lines)
+
+
 def main():
-    port = free_port()
-    url = f"http://127.0.0.1:{port}"
-    server = http.server.HTTPServer(("127.0.0.1", port), Handler)
-    threading.Timer(0.5, lambda: webbrowser.open(url)).start()
-    print(f"설정 화면을 열었습니다: {url}")
-    print("다 끝나면 이 터미널에서 Ctrl+C 를 누르세요.")
+    opts = parse_args(sys.argv[1:])
+    host = "0.0.0.0" if opts["public"] else "127.0.0.1"
+    port = free_port(host, opts["port"])
+    server = http.server.HTTPServer((host, port), Handler)
+    only_from, rule = None, None
+
+    if opts["public"]:
+        # 바깥에 열면 열쇠말을 붙입니다. 그리고 들어온 SSH 주소를 알면 그 주소만
+        # 열어 둡니다. 클라우드 서버의 열린 포트는 몇 분 만에 스캔당합니다.
+        server.token = secrets.token_urlsafe(9)
+        only_from, _ = ssh_peer()
+        rule = firewall_open(port, only_from)
+        url = f"http://{my_address()}:{port}/?t={server.token}"
+        print(public_guide(url, port, opts["minutes"], rule, only_from))
+        closing = threading.Timer(opts["minutes"] * 60, server.shutdown)
+        closing.daemon = True
+        closing.start()
+    elif has_browser():
+        url = f"http://127.0.0.1:{port}"
+        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+        print(f"설정 화면을 열었습니다: {url}")
+        print("다 끝나면 이 터미널에서 Ctrl+C 를 누르세요.")
+    else:
+        print(tunnel_guide(port))
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n설정을 마쳤습니다.")
+        pass
+    finally:
+        firewall_close(rule)
+        print("\n설정을 마쳤습니다." + (" 열었던 포트는 닫았습니다." if rule else ""))
 
 
 if __name__ == "__main__":

@@ -1,6 +1,7 @@
 import contextlib
 import datetime
 import io
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -131,6 +132,33 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertNotIn("confirmStrategy", setup.PAGE)
         self.assertNotIn("cf-btn", setup.PAGE)
         self.assertFalse(hasattr(setup.Handler, "confirm"))
+
+    def test_setup_on_a_server_tells_how_to_reach_the_screen(self):
+        # 서버에는 브라우저가 없습니다. "열었습니다"라고 말하는 대신, 내 PC에서
+        # 무엇을 치면 되는지 서버 주소까지 넣어 알려 줘야 합니다.
+        with mock.patch.dict(os.environ, {"SSH_CONNECTION": "1.2.3.4 5 10.9.9.9 22"}):
+            self.assertFalse(setup.has_browser())
+            guide = setup.tunnel_guide(8777)
+        self.assertIn("ssh -N -L 8777:127.0.0.1:8777", guide)
+        self.assertIn("10.9.9.9", guide)
+
+    def test_setup_public_screen_is_locked_without_the_key(self):
+        # --public 은 .env를 고치는 화면을 인터넷에 내놓습니다. 열쇠말이 없으면
+        # 화면도 버튼도 열리지 않아야 합니다.
+        def visitor(path, cookie="", token="s3cret"):
+            fake = setup.Handler.__new__(setup.Handler)
+            fake.server = mock.Mock(token=token)
+            fake.path = path
+            fake.headers = {"Cookie": cookie}
+            return fake
+
+        self.assertFalse(setup.Handler.allowed(visitor("/")))
+        self.assertFalse(setup.Handler.allowed(visitor("/?t=아무거나")))
+        self.assertFalse(setup.Handler.allowed(visitor("/status", "nh_setup=틀림")))
+        self.assertTrue(setup.Handler.allowed(visitor("/?t=s3cret")))
+        self.assertTrue(setup.Handler.allowed(visitor("/status", "nh_setup=s3cret")))
+        # 내 컴퓨터에서 그냥 열었을 때(열쇠말 없음)는 지금처럼 바로 열립니다.
+        self.assertTrue(setup.Handler.allowed(visitor("/", token=None)))
 
     def test_trade_opens_setup_instead_of_crashing_without_keys(self):
         output = io.StringIO()
