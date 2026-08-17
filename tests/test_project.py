@@ -133,14 +133,32 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertNotIn("cf-btn", setup.PAGE)
         self.assertFalse(hasattr(setup.Handler, "confirm"))
 
-    def test_setup_on_a_server_tells_how_to_reach_the_screen(self):
-        # 서버에는 브라우저가 없습니다. "열었습니다"라고 말하는 대신, 내 PC에서
-        # 무엇을 치면 되는지 서버 주소까지 넣어 알려 줘야 합니다.
+    def test_setup_on_a_server_never_asks_the_user_to_type_a_command(self):
+        # 이 글을 읽는 것은 사람이 아니라 에이전트입니다. 사용자는 터미널을 못 씁니다.
+        # 첫 화면에 ssh 한 줄이라도 적히면 에이전트가 그대로 옮겨 붙입니다.
         with mock.patch.dict(os.environ, {"SSH_CONNECTION": "1.2.3.4 5 10.9.9.9 22"}):
             self.assertFalse(setup.has_browser())
-            guide = setup.tunnel_guide(8777)
+            guide = setup.agent_guide(8777)
+        self.assertNotIn("ssh ", guide)
+        self.assertNotIn("$", guide)
+        self.assertIn("FORWARD_PORT=8777", guide)
+        self.assertIn("포트 전달", guide)
+
+    def test_setup_keeps_the_manual_way_for_when_nothing_else_works(self):
+        # 최후의 수단은 남겨 두되, 아무도 화면을 열지 못했을 때만 꺼냅니다.
+        with mock.patch.dict(os.environ, {"SSH_CONNECTION": "1.2.3.4 5 10.9.9.9 22"}):
+            guide = setup.manual_guide(8777)
         self.assertIn("ssh -N -L 8777:127.0.0.1:8777", guide)
         self.assertIn("10.9.9.9", guide)
+
+    def test_setup_marks_the_screen_as_opened_so_it_stops_explaining(self):
+        visitor = setup.Handler.__new__(setup.Handler)
+        visitor.server = mock.Mock(token=None, opened=False)
+        visitor.path = "/"
+        visitor.headers = {}
+        with mock.patch.object(setup.Handler, "_send"):
+            setup.Handler.do_GET(visitor)
+        self.assertTrue(visitor.server.opened)
 
     def test_setup_public_screen_is_locked_without_the_key(self):
         # --public 은 .env를 고치는 화면을 인터넷에 내놓습니다. 열쇠말이 없으면

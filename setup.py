@@ -466,6 +466,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if not self.allowed():
             return self._send("주소 끝의 열쇠말이 없거나 틀렸습니다.", "text/plain", 403)
+        # 누군가 화면을 열었다는 표시. 열렸으면 "이렇게 접속하세요" 안내를 더
+        # 뿌리지 않습니다.
+        self.server.opened = True
         page = PAGE.replace("%%PROMPT%%", json.dumps(CODEX_PROMPT, ensure_ascii=False))
         # 예약에 넣을 글은 schedule.txt 한 곳에만 둡니다. 화면과 README가 따로
         # 적혀 있으면 언젠가 서로 어긋납니다.
@@ -659,6 +662,19 @@ def firewall_close(rule):
         ufw("delete", *rule)
 
 
+# 에이전트가 포트를 이어 주기까지 주는 시간. 사람이 브라우저를 여는 시간까지
+# 넉넉히 기다립니다. 급하게 대체 안내를 뿌리면 안 하느니만 못합니다.
+WAIT_BEFORE_MANUAL = 90
+
+
+def after(seconds, action):
+    """잠시 뒤에 한 번 실행합니다. 프로그램이 끝나는 것을 붙잡지 않습니다."""
+    timer = threading.Timer(seconds, action)
+    timer.daemon = True
+    timer.start()
+    return timer
+
+
 USAGE = """python setup.py            내 컴퓨터에서 (브라우저가 저절로 열립니다)
 python setup.py --public   서버에서, SSH 터널을 쓸 수 없을 때만
     --port 8777            쓸 포트
@@ -683,19 +699,42 @@ def parse_args(argv):
     return opts
 
 
-def tunnel_guide(port):
-    """서버에는 브라우저가 없습니다. 내 PC의 브라우저를 빌려 쓰는 법."""
+def agent_guide(port):
+    """서버에서 실행됐을 때 맨 처음 나오는 글.
+
+    이 글을 읽는 것은 사람이 아니라 에이전트(Codex 등)입니다. 사람은 터미널을
+    쓸 줄 모릅니다. 그러니 여기에 사람이 칠 명령을 적어 두면 안 됩니다. 적어 두면
+    에이전트가 그걸 그대로 사용자에게 옮겨 붙이고, 사용자는 막힙니다.
+    에이전트에는 대개 포트를 이어 주는 기능(웹 미리보기)이 있으니 그것을 시킵니다.
+    """
+    return (
+        f"설정 화면이 이 컴퓨터의 127.0.0.1:{port} 에 떠 있습니다.\n"
+        f"FORWARD_PORT={port}\n"
+        "\n"
+        "─ 이 글을 읽는 에이전트에게 ────────────────────────────────\n"
+        "사용자는 터미널을 쓰지 않습니다. 명령줄을 사용자에게 보여 주지 마세요.\n"
+        f"당신의 포트 전달 기능(웹 미리보기 / port forward)으로 {port} 번을 열고,\n"
+        "열린 주소 한 줄만 사용자에게 건네주세요. 사용자는 그 주소에서 키를 넣습니다.\n"
+        "키는 묻지도, 대신 넣지도 마세요. 이 프로세스는 끄지 말고 켜 두세요.\n"
+        "────────────────────────────────────────────────────────\n"
+    )
+
+
+def manual_guide(port):
+    """아무도 화면을 열지 못했을 때만 뒤늦게 나오는 최후의 수단.
+
+    포트를 이어 줄 방법이 정말 없는 경우에만 쓰라고, 처음부터 보여 주지 않습니다.
+    """
     user = os.environ.get("USER") or os.environ.get("LOGNAME") or "root"
     return (
-        "이 서버에는 브라우저가 없습니다. 설정 화면은 켜져 있고, 서버 안에서만 보입니다.\n"
+        f"\n아직 아무도 설정 화면({port}번)을 열지 않았습니다.\n"
+        "에이전트에게 포트 전달 기능이 없을 때만, 그때만 아래를 쓰세요.\n"
         "\n"
-        "  ① 내 PC(노트북)에서 터미널을 새로 열고 아래 한 줄을 실행하세요. 창은 켜 둡니다.\n"
-        f"\n     ssh -N -L {port}:127.0.0.1:{port} {user}@{my_address()}\n\n"
-        f"  ② 내 PC 브라우저에서 http://127.0.0.1:{port} 을 엽니다.\n"
+        "  ① 사용자 PC에서 한 줄:\n"
+        f"     ssh -N -L {port}:127.0.0.1:{port} {user}@{my_address()}\n"
+        f"  ② 사용자 PC 브라우저에서 http://127.0.0.1:{port}\n"
         "\n"
-        "포트를 열 필요도, 방화벽을 만질 필요도 없습니다. 키는 SSH 안으로만 지나갑니다.\n"
-        "내 PC에서 SSH를 못 쓴다면(웹 콘솔뿐이라면) 다음으로 다시 실행하세요:\n"
-        "\n     python setup.py --public\n"
+        "  또는 이 컴퓨터에서 다시: python setup.py --public\n"
     )
 
 
@@ -731,6 +770,7 @@ def main():
     host = "0.0.0.0" if opts["public"] else "127.0.0.1"
     port = free_port(host, opts["port"])
     server = http.server.HTTPServer((host, port), Handler)
+    server.opened = False
     only_from, rule = None, None
 
     if opts["public"]:
@@ -741,16 +781,17 @@ def main():
         rule = firewall_open(port, only_from)
         url = f"http://{my_address()}:{port}/?t={server.token}"
         print(public_guide(url, port, opts["minutes"], rule, only_from))
-        closing = threading.Timer(opts["minutes"] * 60, server.shutdown)
-        closing.daemon = True
-        closing.start()
+        after(opts["minutes"] * 60, server.shutdown)
     elif has_browser():
         url = f"http://127.0.0.1:{port}"
-        threading.Timer(0.5, lambda: webbrowser.open(url)).start()
+        after(0.5, lambda: webbrowser.open(url))
         print(f"설정 화면을 열었습니다: {url}")
         print("다 끝나면 이 터미널에서 Ctrl+C 를 누르세요.")
     else:
-        print(tunnel_guide(port))
+        print(agent_guide(port))
+        # 대개는 에이전트가 알아서 포트를 이어 줍니다. 그러면 이 아래는 영영
+        # 나오지 않습니다. 정말 아무도 못 열었을 때만 뒤늦게 한 번 알립니다.
+        after(WAIT_BEFORE_MANUAL, lambda: print(manual_guide(port)) if not server.opened else None)
 
     try:
         server.serve_forever()
