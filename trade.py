@@ -34,7 +34,7 @@ TRIED = Path(__file__).with_name(".cache") / "tried.json"
 # 예약이 보내는 글만으로는 지금 상황이 한눈에 안 들어옵니다. 회차마다 여기에
 # 남겨 두고, board.py 가 같은 내용을 표와 색으로 그려 줍니다.
 BOARD = Path(__file__).with_name(".cache") / "board.json"
-KEEP_ROUNDS = 20
+KEEP_ROUNDS = 50  # 미국장은 하룻밤에 일곱 번 돕니다. 며칠은 되돌아볼 수 있게.
 
 
 def log(message):
@@ -259,14 +259,22 @@ def remember(result):
         saved = {}
     rounds = saved.get("회차") or []
 
-    # 장이 닫힌 회차까지 쌓으면 기록이 빈 줄로 뒤덮입니다. 무슨 일이 있었던
-    # 회차만 남기고, 마지막으로 돈 시각은 따로 적습니다.
-    if result.get("처리함"):
-        rounds.insert(0, {
-            "시각": now.strftime("%m-%d %H:%M"),
+    # 장이 열려 있던 회차는 **주문이 없었어도** 남깁니다. "봤고 그대로 뒀다"도
+    # 알아야 할 소식입니다. 예약이 돌긴 도는지 확인할 길이 이것뿐이기도 합니다.
+    # 장이 닫힌 회차만 뺍니다. 그것까지 쌓으면 기록이 빈 줄로 뒤덮입니다.
+    if result.get("장") == "열림":
+        stamp = now.strftime("%m-%d %H:%M")
+        entry = {
+            "시각": stamp,
             "요약": result.get("요약", ""),
-            "처리함": result["처리함"],
-        })
+            "처리함": result.get("처리함") or [],
+        }
+        # --scan 으로 물어본 뒤 --do 로 주문하면 같은 분에 두 줄이 생깁니다.
+        # 뒤에 온 쪽이 실제로 한 일이므로, 아무것도 안 한 앞줄을 덮습니다.
+        if rounds and rounds[0].get("시각") == stamp and not rounds[0].get("처리함"):
+            rounds[0] = entry
+        else:
+            rounds.insert(0, entry)
         del rounds[KEEP_ROUNDS:]
 
     saved |= {"마지막실행": now.strftime("%Y-%m-%d %H:%M"), "회차": rounds}

@@ -13,6 +13,7 @@ import http.server
 import json
 import secrets
 import sys
+import time
 import urllib.parse
 import webbrowser
 
@@ -20,6 +21,7 @@ import setup  # 화면을 어떻게 띄울지(브라우저·에이전트·공개
 import trade
 
 REFRESH = 60  # 이 초마다 화면이 스스로 다시 그립니다. NH에 다시 묻지는 않습니다.
+STALE = 600  # 남겨 둔 자료가 이만큼 오래됐으면, 화면을 열 때 알아서 다시 불러옵니다.
 
 HEAD = """<!doctype html>
 <html lang="ko"><head><meta charset="utf-8">
@@ -138,11 +140,13 @@ def page(saved):
         return HEAD.format(style=STYLE, refresh="") + (
             "<main><h1>자동매매 현황</h1>"
             '<div class="card"><p class="none">'
-            "<b>이 폴더에서는 아직 예약이 돈 적이 없습니다.</b><br><br>"
-            "장이 열린 뒤 예약이 한 번 돌면 여기에 채워집니다.<br>"
+            "<b>아직 보여 드릴 것이 없습니다.</b><br><br>"
+            "이 폴더에 예약이 돈 기록이 없고, 계좌를 불러오지도 못했습니다.<br>"
+            "NH 키가 아직 없거나 연결이 안 되는 것일 수 있습니다. "
+            "설정 화면에서 <b>저장하고 연결 확인</b>을 먼저 해 주세요.<br>"
             "예약은 도는데 계속 이 화면이라면, 예약이 도는 컴퓨터와 이 화면을 띄운 "
             "컴퓨터가 서로 다른 것입니다.</p>"
-            f'<p style="margin-top:14px"><a class="btn" href="/?load=1">지금 계좌 불러오기</a></p>'
+            '<p style="margin-top:14px"><a class="btn" href="/?load=1">다시 불러오기</a></p>'
             '<p class="none" style="margin-top:10px">NH에 계좌만 물어봅니다. 주문하지 않습니다.</p>'
             f'<p class="none" style="margin-top:14px">읽는 곳 {esc(trade.BOARD)}</p>'
             "</div></main></body></html>"
@@ -158,8 +162,8 @@ def page(saved):
     return HEAD.format(style=STYLE, refresh=f'<meta http-equiv="refresh" content="{REFRESH}">') + f"""
 <main>
 <h1>자동매매 현황</h1>
-<p class="when">마지막 실행 {esc(saved.get("마지막실행", "-"))} · {REFRESH}초마다 저절로 새로 그립니다
- · <a href="/?load=1">지금 계좌 불러오기</a></p>
+<p class="when">마지막 실행 {esc(saved.get("마지막실행", "-"))} · {REFRESH}초마다 저절로 새로 그리고
+{STALE // 60}분 넘으면 계좌를 다시 불러옵니다 · <a href="/?load=1">지금 다시 불러오기</a></p>
 <div class="chips">{chips}</div>
 
 <div class="big">
@@ -192,13 +196,33 @@ def read_board():
 def load_now():
     """NH에 계좌만 물어봐서 화면을 채웁니다. 주문하지 않습니다.
 
-    예약을 기다리지 않고 지금 보고 싶을 때를 위한 것입니다. 조회 전용 모드만
-    부르므로, 이 화면에서 주문이 나갈 길은 여전히 없습니다.
+    조회 전용 모드만 부르므로, 이 화면에서 주문이 나갈 길은 여전히 없습니다.
     """
     try:
         setup.run_child(["trade.py", "--account"], timeout=120)
     except Exception as exc:
         print(f"계좌를 불러오지 못했습니다: {exc}")
+
+
+def stale():
+    """남겨 둔 자료가 오래됐나. 파일이 아예 없으면 당연히 오래된 것입니다."""
+    try:
+        return time.time() - trade.BOARD.stat().st_mtime > STALE
+    except OSError:
+        return True
+
+
+def load_if_stale(server):
+    """화면을 열었는데 보여 줄 것이 없거나 오래됐으면 알아서 불러옵니다.
+
+    사람이 버튼을 눌러야 채워지는 화면은 화면이 아니라 숙제입니다. 다만 60초마다
+    NH에 묻지는 않도록, 실패했더라도 STALE 만큼은 쉬었다 다시 시도합니다.
+    """
+    now = time.time()
+    if not stale() or now - getattr(server, "last_try", 0) < STALE:
+        return
+    server.last_try = now  # 먼저 적어 둡니다. 새로고침이 겹쳐도 두 번 나가지 않게.
+    load_now()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -224,9 +248,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.server.opened = True
         query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
         if query.get("load") == ["1"]:
+            self.server.last_try = time.time()
             load_now()
             # 주소에 load가 남아 있으면 60초마다 NH에 다시 묻게 됩니다. 되돌려 보냅니다.
             return self._send(303, "불러왔습니다.", location="/")
+        load_if_stale(self.server)
         self._send(200, page(read_board()))
 
 

@@ -156,10 +156,52 @@ class IntegrationHelpersTests(unittest.TestCase):
         # 예약이 도는 컴퓨터와 화면을 띄운 컴퓨터가 달라서 비어 보이는 일이
         # 실제로 있었습니다. 빈 화면이 스스로 그 사실을 짚어 줘야 합니다.
         empty = board.page({})
-        self.assertIn("이 폴더에서는 아직 예약이 돈 적이 없습니다", empty)
+        self.assertIn("아직 보여 드릴 것이 없습니다", empty)
         self.assertIn("컴퓨터가 서로 다른 것입니다", empty)
         self.assertIn("board.json", empty)  # 어느 파일을 읽는지 밝힙니다
-        self.assertIn("/?load=1", empty)  # 기다리지 않고 지금 채울 수 있습니다
+        self.assertIn("/?load=1", empty)  # 자동으로 못 채웠을 때 다시 시도할 길
+
+    def test_rounds_are_kept_even_when_nothing_was_bought(self):
+        # "봤고 그대로 뒀다"도 소식입니다. 이것을 안 남기면, 예약이 도는지조차
+        # 화면으로 확인할 수 없습니다.
+        with tempfile.TemporaryDirectory() as folder:
+            spot = Path(folder) / "board.json"
+            with mock.patch.object(trade, "BOARD", spot):
+                trade.remember({"장": "열림", "요약": "3종목 다 그대로 뒀습니다.", "처리함": []})
+                saved = json.loads(spot.read_text(encoding="utf-8"))
+                self.assertEqual(len(saved["회차"]), 1)
+                self.assertIn("그대로", saved["회차"][0]["요약"])
+
+                # 장이 닫힌 회차까지 쌓으면 기록이 빈 줄로 뒤덮입니다.
+                trade.remember({"장": "닫힘", "요약": "열려 있는 장이 없습니다.", "처리함": []})
+                saved = json.loads(spot.read_text(encoding="utf-8"))
+                self.assertEqual(len(saved["회차"]), 1)
+                self.assertTrue(saved["마지막실행"])  # 돌긴 돌았다는 것은 남습니다
+
+    def test_a_scan_round_is_replaced_by_the_order_that_follows_it(self):
+        # --scan 으로 물어보고 --do 로 주문하면 같은 분에 두 줄이 생깁니다.
+        with tempfile.TemporaryDirectory() as folder:
+            spot = Path(folder) / "board.json"
+            with mock.patch.object(trade, "BOARD", spot):
+                trade.remember({"장": "열림", "요약": "2종목 정해 주세요.", "처리함": []})
+                trade.remember({"장": "열림", "요약": "1종목 샀습니다.",
+                                "처리함": [{"종목": "엔비디아(NVDA)", "한 일": "매수", "구분": "매수"}]})
+                saved = json.loads(spot.read_text(encoding="utf-8"))
+        self.assertEqual(len(saved["회차"]), 1)
+        self.assertIn("샀습니다", saved["회차"][0]["요약"])
+
+    def test_board_fills_itself_without_the_user_pressing_anything(self):
+        # 사람이 눌러야 채워지는 화면은 화면이 아니라 숙제입니다.
+        server = mock.Mock(last_try=0)
+        with (
+            mock.patch.object(board, "stale", return_value=True),
+            mock.patch.object(board, "load_now") as loaded,
+        ):
+            board.load_if_stale(server)
+            self.assertEqual(loaded.call_count, 1)
+            # 다만 새로고침마다 NH에 묻지는 않습니다. 잠시 쉬었다 다시 봅니다.
+            board.load_if_stale(server)
+            self.assertEqual(loaded.call_count, 1)
 
     def test_board_does_not_let_a_stock_name_become_html(self):
         # 종목 이름은 NH가 준 글자입니다. 그대로 넣으면 화면이 깨집니다.
