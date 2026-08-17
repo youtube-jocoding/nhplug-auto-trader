@@ -253,6 +253,30 @@ def portfolio(held, cash):
     }
 
 
+def limits():
+    """지금 걸려 있는 한도. 실제 돈으로 넘어가기 전에 이 숫자부터 봐야 합니다.
+
+    전략 파일을 열어 봐야만 알 수 있으면, 파일을 못 여는 사람은 자기 돈이 얼마나
+    걸려 있는지 영영 모릅니다. 화면에 그대로 띄웁니다.
+    """
+    per_kr = strategy.BUY_AMOUNT
+    per_us = getattr(strategy, "US_BUY_AMOUNT", 0)
+    most = strategy.MAX_HOLDINGS
+    return {
+        "한 종목에 넣는 돈": f"국내 {per_kr:,}원 · 미국 ${per_us:,}",
+        "최대 종목 수": f"{most}종목",
+        # 다 국내로 채울 때와 다 미국으로 채울 때가 다릅니다. 둘 다 보여 줍니다.
+        "최대로 들어갈 수 있는 돈": f"국내만이면 {per_kr * most:,}원 · 미국만이면 ${per_us * most:,}",
+        "손절 · 익절": (
+            f"{getattr(strategy, 'STOP_LOSS_PCT', 0):+.1f}% · "
+            f"{getattr(strategy, 'TAKE_PROFIT_PCT', 0):+.1f}%"
+        ),
+        "미국을 보는 시간대": " · ".join(
+            {"pre": "프리마켓", "regular": "정규장", "after": "애프터마켓"}[s] for s in us_sessions()
+        ),
+    }
+
+
 def sent_order(done):
     """이번 회차에 실제로 주문이 나갔나."""
     return any(item.get("구분") in ("매수", "매도") for item in done or [])
@@ -318,6 +342,7 @@ def remember(result):
         "마지막실행": now.strftime("%Y-%m-%d %H:%M"),
         "회차": rounds,
         "확인필요": sent_order(result.get("처리함")),
+        "한도": limits(),
     }
     for field in ("계좌", "지금", "국내장", "미국장", "요약"):
         if field in result:

@@ -190,6 +190,16 @@ td.down{color:#1552c7}
 <h1>자동매매 설정</h1>
 <p class="sub">여기서 다 끝납니다. 파일을 직접 열 필요 없어요.</p>
 
+<div id="live-mode" class="warn" hidden style="margin-bottom:20px">
+  <b>실제 돈으로 바꾸려고 이 화면을 열었습니다.</b> 순서가 있습니다.<br><br>
+  <b>①</b> 아래 <b>3단계에서 Telegram을 먼저 연결</b>하세요.
+  주문마다 여기로 확인이 오고, <b>승인해야만 나갑니다.</b>
+  연결하지 않으면 실제 계좌로 바꿀 수 없습니다.<br>
+  <b>②</b> 그다음 <b>1단계에서 [실제 계좌]</b>를 고르고 저장하세요.
+  <b>키는 다시 넣지 않아도 됩니다.</b> 두 칸은 비워 두세요.<br><br>
+  되돌리려면 언제든 [모의투자 계좌]로 바꾸면 됩니다.
+</div>
+
 <div id="now"></div>
 <p id="todo"></p>
 
@@ -281,6 +291,7 @@ td.down{color:#1552c7}
 
 <script>
 let mock = 1;
+const LIVE_MODE = %%LIVE%%;
 const PROMPT = %%PROMPT%%;
 document.getElementById('prompt').textContent = PROMPT;
 
@@ -326,7 +337,10 @@ async function refresh(){
   if (s.keys) document.getElementById('k-state').textContent = '연결됨';
   document.getElementById('k-hint').hidden = !s.keys;
   if (s.telegram) document.getElementById('t-state').textContent = '연결됨';
-  setMock(s.live ? 0 : 1);
+  // "실전투자"로 열었으면 실제 계좌를 미리 골라 두고 순서를 띄웁니다. 이미
+  // 실거래로 돌고 있으면 안내가 필요 없습니다.
+  document.getElementById('live-mode').hidden = !(LIVE_MODE && !s.live);
+  setMock(LIVE_MODE ? 0 : (s.live ? 0 : 1));
 }
 refresh();
 async function save(){
@@ -552,6 +566,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         # 예약에 넣을 글은 schedule.txt 한 곳에만 둡니다. 화면과 README가 따로
         # 적혀 있으면 언젠가 서로 어긋납니다.
         page = page.replace("%%SCHEDULE%%", schedule_text()).replace("%%POINTER%%", POINTER)
+        page = page.replace("%%LIVE%%", "1" if getattr(self.server, "live", False) else "0")
         # 열쇠말을 쿠키로 옮겨 둡니다. 이후 버튼(POST)마다 주소에 붙이지 않아도
         # 되고, 주소창을 실수로 복사해 남길 일도 줄어듭니다.
         self._send(page, "text/html", cookie=getattr(self.server, "token", None))
@@ -774,17 +789,20 @@ def after(seconds, action):
 
 
 USAGE = """python setup.py            내 컴퓨터에서 (브라우저가 저절로 열립니다)
+python setup.py --live     실제 계좌로 넘어가려고 열 때. 순서를 짚어 줍니다
 python setup.py --public   서버에서, SSH 터널을 쓸 수 없을 때만
     --port 8777            쓸 포트
     --minutes 30           이 시간이 지나면 스스로 닫습니다"""
 
 
 def parse_args(argv):
-    opts = {"public": False, "port": 8777, "minutes": 30}
+    opts = {"public": False, "port": 8777, "minutes": 30, "live": False}
     rest = iter(argv)
     for arg in rest:
         if arg == "--public":
             opts["public"] = True
+        elif arg == "--live":
+            opts["live"] = True
         elif arg in ("--port", "--minutes"):
             try:
                 opts[arg[2:]] = int(next(rest, ""))
@@ -874,6 +892,7 @@ def main():
     # 한 줄로 도는 서버는 그 빈 연결을 기다리다 화면 전체가 멈춥니다.
     server = http.server.ThreadingHTTPServer((host, port), Handler)
     server.opened = False
+    server.live = opts["live"]
     only_from, rule = None, None
 
     if opts["public"]:

@@ -112,6 +112,17 @@ def holdings_table(now):
     return f"<table>{head}{body}</table>"
 
 
+def limits_table(caps):
+    """얼마까지 걸리는지. 실제 돈으로 넘어가기 전에 여기부터 보게 합니다."""
+    if not caps:
+        return '<p class="none">아직 모릅니다. 예약이 한 번 돌면 여기에 나옵니다.</p>'
+    rows = "".join(
+        f'<tr><td>{esc(name)}</td><td class="num">{esc(value)}</td></tr>'
+        for name, value in caps.items()
+    )
+    return f"<table>{rows}</table>"
+
+
 def rounds_list(rounds):
     """예약이 돈 회차들. 무엇을 했는지가 먼저, 왜 했는지는 접어 둡니다."""
     if not rounds:
@@ -182,6 +193,11 @@ def page(saved):
 <div class="card">
   <h2>지금 들고 있는 것</h2>
   {holdings_table(now)}
+</div>
+
+<div class="card">
+  <h2>지금 걸려 있는 한도</h2>
+  {limits_table(saved.get("한도") or {})}
 </div>
 
 <div class="card">

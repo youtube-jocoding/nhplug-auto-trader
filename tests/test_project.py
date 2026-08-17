@@ -296,6 +296,56 @@ class IntegrationHelpersTests(unittest.TestCase):
         for forbidden in ("update_env", "--do", "--scan", "do_POST", "broker.order"):
             self.assertNotIn(forbidden, source)
 
+    def test_live_mode_walks_through_the_order_it_must_happen_in(self):
+        # "실전투자"로 열면 화면이 순서를 스스로 짚어 줘야 합니다. Telegram이 먼저고,
+        # 그다음이 계좌 전환입니다. 반대로 하면 저장이 거절됩니다.
+        self.assertTrue(setup.parse_args(["--live"])["live"])
+        self.assertFalse(setup.parse_args([])["live"])
+        self.assertIn("실제 돈으로 바꾸려고", setup.PAGE)
+        self.assertIn("Telegram을 먼저 연결", setup.PAGE)
+        self.assertIn("키는 다시 넣지 않아도 됩니다", setup.PAGE)
+        self.assertIn("LIVE_MODE", setup.PAGE)
+
+    def test_agents_file_tells_the_agent_the_live_keyword(self):
+        # 사용자는 "실전투자"라고만 칩니다. 그 말이 무엇을 뜻하는지 적어 두지 않으면
+        # 에이전트마다 다르게 움직입니다.
+        guide = (Path(setup.__file__).with_name("AGENTS.md")).read_text(encoding="utf-8")
+        self.assertIn("실전투자", guide)
+        self.assertIn("setup.py --live", guide)
+        self.assertIn("check.py", guide)  # 검사를 통과해야 실제 돈으로 갑니다
+        self.assertIn("키나 비밀번호는 묻지도", guide)
+        self.assertIn("명령줄을 사용자에게 보여주지", guide)
+
+    def test_limits_are_visible_without_opening_the_strategy_file(self):
+        # 파일을 못 여는 사람이 자기 돈이 얼마나 걸려 있는지 알 길이 있어야 합니다.
+        with (
+            mock.patch.object(strategy, "BUY_AMOUNT", 1_000_000),
+            mock.patch.object(strategy, "US_BUY_AMOUNT", 600),
+            mock.patch.object(strategy, "MAX_HOLDINGS", 5),
+        ):
+            caps = trade.limits()
+        self.assertIn("1,000,000원", caps["한 종목에 넣는 돈"])
+        self.assertIn("$600", caps["한 종목에 넣는 돈"])
+        self.assertIn("5,000,000원", caps["최대로 들어갈 수 있는 돈"])
+        self.assertIn("$3,000", caps["최대로 들어갈 수 있는 돈"])
+        self.assertIn("한 종목에 넣는 돈", board.page({"한도": caps, "지금": {}, "회차": []}))
+
+    def test_one_share_costing_more_than_the_budget_is_not_bought(self):
+        # MU 한 주가 $1,029 인데 예산이 $600 이면 0주입니다. 예산을 넘겨 사지 않습니다.
+        m = {
+            "code": "MU", "name": "마이크론", "market": "us", "currency": "USD",
+            "price": 1029.79, "closes": [1000.0] * 20, "held": False, "qty": 0, "avg": 0,
+            "pnl_pct": 0.0, "cash": 5_000_000, "turnover": 9e8, "high_52w": 1400.0, "ai": None,
+        }
+        with (
+            mock.patch.object(strategy, "US_BUY_AMOUNT", 600),
+            mock.patch.object(strategy, "MAX_HOLDINGS", 5),
+            mock.patch.object(broker, "us_buyable", return_value=99),
+            mock.patch.object(broker, "us_order", side_effect=AssertionError("주문하면 안 됨")),
+        ):
+            note = trade.buy("500", m, {}, "사고 싶다")
+        self.assertIn("0주", note)
+
     def test_switching_to_the_real_account_does_not_ask_for_the_keys_again(self):
         # 모의 ↔ 실제만 바꾸려는 사람이 키를 다시 찾아와야 한다면, 개발을 모르는
         # 사람에게는 그 자리에서 막히는 것과 같습니다. 같은 키를 쓰니 그대로 씁니다.
