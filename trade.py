@@ -13,8 +13,10 @@
 
 import datetime
 import json
+import socket
 import sys
 import time
+import urllib.error
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -379,6 +381,8 @@ def remember(result):
         "회차": rounds,
         "확인필요": sent_order(result.get("처리함")),
         "한도": limits(),
+        # 막혀 있으면 화면 맨 위에 그대로 띄웁니다. 다음 회차가 잘 돌면 지워집니다.
+        "문제": result.get("오류", ""),
     }
     for field in ("계좌", "지금", "국내장", "미국장", "요약"):
         if field in result:
@@ -648,6 +652,33 @@ def approved(act, m, side, qty, price, reason=""):
     return ""
 
 
+BLOCKED = (
+    "인터넷으로 나가는 길이 막혀 NH에 닿지 못했습니다. 키 문제가 아닙니다. "
+    "예약이 도는 컴퓨터에서 바깥 연결이 막혔는지 보세요. "
+    "에이전트 샌드박스의 네트워크 허용, 백신·방화벽, 그리고 NH가 쓰는 8443 포트."
+)
+
+
+def looks_like_network(exc):
+    """키가 틀린 것인가, 바깥에 못 나가는 것인가.
+
+    둘을 구분하지 않으면 연결이 막혔을 때도 설정 화면을 엽니다. 그러면 아무도
+    없는 자리에서 서버가 떠서 그 회차가 영영 끝나지 않습니다. 예약이라 더 나쁩니다.
+    """
+    if isinstance(exc, urllib.error.HTTPError):
+        return False  # 서버가 답을 하긴 했으니 연결 문제는 아닙니다
+    if isinstance(exc, (TimeoutError, ConnectionError, socket.gaierror, urllib.error.URLError)):
+        return True
+    said = str(exc).lower()
+    return any(
+        word in said
+        for word in (
+            "connection", "timed out", "timeout", "unreachable", "refused",
+            "resolve", "getaddrinfo", "network", "handshake", "sandbox", "차단",
+        )
+    )
+
+
 def open_setup():
     """설정 화면을 대신 열어 줍니다. 브라우저가 뜨고, 여기서 기다립니다.
 
@@ -812,6 +843,13 @@ def main():
         act = broker.account()
     except Exception as exc:
         log(f"NH에 연결하지 못했습니다: {exc}")
+        if looks_like_network(exc):
+            # 설정 화면을 열어 봐야 소용없습니다. 키가 아니라 길이 막힌 것이니,
+            # 무엇을 봐야 하는지 적어 두고 회차를 끝냅니다.
+            log(BLOCKED)
+            remember({"오류": BLOCKED})
+            print(json.dumps({"오류": BLOCKED, "자세히": str(exc)}, ensure_ascii=False, indent=2))
+            return
         # --account 는 설정 화면이 스스로 부릅니다. 여기서 또 열면 설정 화면이
         # 설정 화면을 띄우는 꼴이 됩니다.
         if mode != "--account":

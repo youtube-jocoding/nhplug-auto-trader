@@ -3,7 +3,9 @@ import datetime
 import io
 import json
 import os
+import socket
 import tempfile
+import urllib.error
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -202,6 +204,35 @@ class IntegrationHelpersTests(unittest.TestCase):
         with mock.patch.object(broker, "holdings", side_effect=RuntimeError("끊김")):
             held, cash = trade.refreshed("500", old, 1_000_000, [sold])
         self.assertEqual(held, old)
+
+    def test_a_blocked_network_does_not_open_the_setup_screen(self):
+        # 연결이 막힌 것을 "키가 없다"로 읽으면 설정 화면을 엽니다. 그 화면은
+        # serve_forever 라서, 아무도 없는 예약 자리에서 회차가 영영 안 끝납니다.
+        self.assertTrue(trade.looks_like_network(ConnectionRefusedError("refused")))
+        self.assertTrue(trade.looks_like_network(TimeoutError("timed out")))
+        self.assertTrue(trade.looks_like_network(RuntimeError("sandbox blocked egress")))
+        self.assertTrue(trade.looks_like_network(socket.gaierror("getaddrinfo failed")))
+        # 서버가 답을 한 경우는 연결 문제가 아닙니다. 키를 봐야 합니다.
+        self.assertFalse(trade.looks_like_network(
+            urllib.error.HTTPError("u", 401, "Unauthorized", {}, None)))
+        self.assertFalse(trade.looks_like_network(RuntimeError("AppKey가 올바르지 않습니다")))
+
+        output = io.StringIO()
+        with tempfile.TemporaryDirectory() as folder:
+            with (
+                mock.patch.object(trade.sys, "argv", ["trade.py", "--scan"]),
+                mock.patch.object(trade, "BOARD", Path(folder) / "board.json"),
+                mock.patch.object(broker, "accounts", side_effect=ConnectionRefusedError("막힘")),
+                mock.patch.object(trade, "open_setup", side_effect=AssertionError("열면 안 됨")),
+                contextlib.redirect_stdout(output),
+                contextlib.redirect_stderr(io.StringIO()),
+            ):
+                trade.main()
+            saved = json.loads((Path(folder) / "board.json").read_text(encoding="utf-8"))
+        self.assertIn("나가는 길이 막혀", output.getvalue())
+        # 화면에도 그대로 떠야 합니다. 조용히 넘어가면 또 밤을 새웁니다.
+        self.assertIn("나가는 길이 막혀", saved["문제"])
+        self.assertIn('<p class="alarm">', board.page(saved))
 
     def test_not_enough_cash_is_said_out_loud(self):
         # 실제 계좌에 13만원뿐인데 한 종목 예산이 200만원이었습니다. 한 주도 못 사는데

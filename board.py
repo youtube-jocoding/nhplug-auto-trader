@@ -200,6 +200,7 @@ def page(saved):
 <p class="when">마지막 실행 {esc(saved.get("마지막실행", "-"))} · {REFRESH}초마다 저절로 새로 그리고
 {STALE // 60}분 넘으면 계좌를 다시 불러옵니다 · <a href="/?load=1">지금 다시 불러오기</a></p>
 <div class="chips">{chips}</div>
+{f'<p class="alarm">{esc(saved["문제"])}</p>' if saved.get("문제") else ""}
 
 <div class="big">
   <div><small>들고 있는 종목</small><b>{esc(now.get("종목수", "-"))}</b></div>
