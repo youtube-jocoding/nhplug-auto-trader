@@ -66,6 +66,8 @@ td.name{white-space:normal}
 .did b{font-weight:600}
 .did.buy b{color:#c22e2e}
 .did.sell b{color:#1552c7}
+.news{font-size:.78rem;color:#66706a;margin:0 0 3px}
+.news.none{color:#c22e2e}
 details{margin-top:4px}
 summary{cursor:pointer;font-size:.78rem;color:#8b948f}
 details p{font-size:.82rem;color:#66706a;margin:6px 0 0;white-space:pre-wrap}
@@ -124,6 +126,11 @@ def rounds_list(rounds):
                 f'<div class="did {kind}"><b>{esc(item.get("종목"))}</b> '
                 f'{esc(item.get("한 일"))}</div>'
             )
+            # 무엇을 보고 그렇게 했는지. 뉴스를 안 봤으면 그 사실이 그대로 보입니다.
+            seen = item.get("뉴스")
+            if seen:
+                mark = " none" if seen == "확인하지 않음" else ""
+                out += f'<div class="news{mark}">뉴스 · {esc(seen)}</div>'
             if item.get("이유"):
                 out += (
                     f'<details><summary>왜 그렇게 했나</summary>'

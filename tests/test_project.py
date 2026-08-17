@@ -238,6 +238,17 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertEqual(board.wait_before_asking({}), board.STALE)
         self.assertLess(board.AFTER_ORDER, board.STALE)
 
+    def test_board_shows_whether_the_news_was_actually_read(self):
+        # 뉴스를 안 보고 지나간 회차가 화면에서 눈에 띄어야 합니다.
+        saved = {"지금": {"보유": []}, "회차": [{"시각": "08-18 01:00", "요약": "그대로 뒀습니다.",
+                 "처리함": [{"종목": "엔비디아(NVDA)", "한 일": "그대로 둠", "뉴스": "관련 제목 없음"},
+                            {"종목": "TSMC(TSM)", "한 일": "그대로 둠", "뉴스": "확인하지 않음"}]}]}
+        html = board.page(saved)
+        self.assertIn('<div class="news">뉴스 · 관련 제목 없음</div>', html)
+        # 안 본 것은 빨갛게. class 를 두 번 쓰면 브라우저가 뒤엣것을 버립니다.
+        self.assertIn('<div class="news none">뉴스 · 확인하지 않음</div>', html)
+        self.assertNotIn('class="news" class=', html)
+
     def test_board_does_not_let_a_stock_name_become_html(self):
         # 종목 이름은 NH가 준 글자입니다. 그대로 넣으면 화면이 깨집니다.
         saved = {"지금": {"보유": [{"종목": "<script>x</script>", "수량": 1, "평균매입가": "-",
@@ -585,6 +596,62 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertIn("모르는 판단", result["처리함"][0]["한 일"])
         self.assertIn("지금 볼 종목이 아닙니다", result["처리함"][1]["한 일"])
 
+    def test_buying_without_checking_the_news_is_refused(self):
+        # "뉴스를 확인해"라고 적어 두기만 하면, 안 봐도 아무도 모릅니다. 실제로
+        # 한 회차가 통째로 뉴스 없이 지나갔습니다. 사는 것만은 코드가 막습니다.
+        with (
+            mock.patch.object(trade, "targets", return_value=[("us", "NVDA")]),
+            mock.patch.object(broker, "holdings", return_value={}),
+            mock.patch.object(broker, "us_holdings", return_value={}),
+            mock.patch.object(broker, "cash", return_value=5_000_000),
+            mock.patch.object(trade, "context") as looked,
+            mock.patch.object(trade, "execute") as ordered,
+        ):
+            result = trade.do("500", {"NVDA": {"decision": "buy", "reason": "좋아 보임"}})
+        ordered.assert_not_called()
+        looked.assert_not_called()  # 시세를 물어볼 것도 없이 여기서 끝납니다
+        self.assertIn("뉴스를 확인하지 않았습니다", result["처리함"][0]["한 일"])
+        self.assertIn("schedule.txt", result["처리함"][0]["이유"])
+
+    def test_selling_is_not_blocked_by_a_missing_news_note(self):
+        # 못 파는 쪽이 더 위험합니다. 파는 것과 그대로 두는 것은 막지 않습니다.
+        m = {
+            "code": "NVDA", "name": "엔비디아", "market": "us", "currency": "USD",
+            "price": 220.0, "closes": [220.0] * 20, "held": True, "qty": 5, "avg": 250.0,
+            "pnl_pct": -12.0, "cash": 5_000_000, "turnover": 9e8, "high_52w": 300.0, "ai": None,
+        }
+        with (
+            mock.patch.object(trade, "targets", return_value=[("us", "NVDA")]),
+            mock.patch.object(broker, "holdings", return_value={}),
+            mock.patch.object(broker, "us_holdings", return_value={}),
+            mock.patch.object(broker, "cash", return_value=5_000_000),
+            mock.patch.object(trade, "context", return_value=m),
+            mock.patch.object(trade, "refreshed", side_effect=lambda a, h, c, d: (h, c)),
+            mock.patch.object(trade, "execute", return_value=trade.noted("엔비디아(NVDA)", "매도", "손절", "매도")) as ordered,
+        ):
+            result = trade.do("500", {"NVDA": {"decision": "sell", "reason": "흐름이 꺾임"}})
+        ordered.assert_called_once()
+        # 다만 뉴스를 안 봤다는 사실은 남습니다. 화면에서 그대로 보입니다.
+        self.assertEqual(result["처리함"][0]["뉴스"], "확인하지 않음")
+
+    def test_the_news_note_is_kept_next_to_the_decision(self):
+        m = {
+            "code": "NVDA", "name": "엔비디아", "market": "us", "currency": "USD",
+            "price": 220.0, "closes": [220.0] * 20, "held": True, "qty": 5, "avg": 200.0,
+            "pnl_pct": 5.0, "cash": 5_000_000, "turnover": 9e8, "high_52w": 300.0, "ai": None,
+        }
+        with (
+            mock.patch.object(trade, "targets", return_value=[("us", "NVDA")]),
+            mock.patch.object(broker, "holdings", return_value={}),
+            mock.patch.object(broker, "us_holdings", return_value={}),
+            mock.patch.object(broker, "cash", return_value=5_000_000),
+            mock.patch.object(trade, "context", return_value=m),
+            mock.patch.object(trade, "refreshed", side_effect=lambda a, h, c, d: (h, c)),
+        ):
+            result = trade.do("500", {"NVDA": {"decision": "hold", "reason": "유지",
+                                               "news": "오하이오 데이터센터 자금 지원 제목"}})
+        self.assertEqual(result["처리함"][0]["뉴스"], "오하이오 데이터센터 자금 지원 제목")
+
     def test_do_puts_the_decision_back_through_the_rules(self):
         # Codex가 사라고 해도 규칙이 걸러야 합니다(여기서는 거래대금 부족).
         m = {
@@ -601,7 +668,8 @@ class IntegrationHelpersTests(unittest.TestCase):
             mock.patch.object(trade, "context", return_value=m),
             mock.patch.object(trade, "execute") as ordered,
         ):
-            result = trade.do("500", {"005930": {"decision": "buy", "reason": "좋아 보임"}})
+            result = trade.do("500", {"005930": {"decision": "buy", "reason": "좋아 보임",
+                                                 "news": "관련 제목 없음"}})
         ordered.assert_not_called()
         self.assertIn("거래", result["처리함"][0]["이유"])
 

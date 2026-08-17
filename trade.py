@@ -36,6 +36,14 @@ TRIED = Path(__file__).with_name(".cache") / "tried.json"
 BOARD = Path(__file__).with_name(".cache") / "board.json"
 KEEP_ROUNDS = 50  # 미국장은 하룻밤에 일곱 번 돕니다. 며칠은 되돌아볼 수 있게.
 
+# 뉴스를 안 보고 사려 할 때 남기는 말. 왜 막혔는지와 무엇을 고치면 되는지를
+# 한 자리에 적어 둡니다. 화면에도 이 문장이 그대로 보입니다.
+NO_NEWS = (
+    "뉴스를 확인했다는 말(news)이 없어 사지 않았습니다. 투자 원칙이 악재가 있으면 "
+    "사지 말라고 하는데, 뉴스를 안 봤다면 그 원칙은 지켜진 적이 없습니다. "
+    "예약 글이 예전 것이면 schedule.txt 를 다시 읽게 해 주세요."
+)
+
 
 def log(message):
     """진행 상황은 표준오류로 보냅니다. 표준출력은 JSON 몫입니다.
@@ -606,8 +614,17 @@ def do(act, calls):
             continue
         decision = call.get("decision") if isinstance(call, dict) else call
         reason = call.get("reason", "") if isinstance(call, dict) else ""
+        news = str(call.get("news", "")).strip() if isinstance(call, dict) else ""
         if decision not in ("buy", "sell", "hold"):
             done.append(noted(code, f"건너뜀 · 모르는 판단 {decision!r}"))
+            continue
+
+        # 사는 것만은 뉴스를 봤다는 말을 받아야 합니다. 투자 원칙이 "악재가 있으면
+        # 사지 마"라고 하는데, 안 보고 샀다면 그 원칙은 지켜진 적이 없는 것입니다.
+        # 파는 것과 그대로 두는 것은 막지 않습니다. 막으면 못 파는 쪽이 더 위험합니다.
+        if decision == "buy" and not news:
+            log(f"  {code} 뉴스를 확인하지 않아 사지 않습니다")
+            done.append(noted(code, "사지 않음 · 뉴스를 확인하지 않았습니다", NO_NEWS))
             continue
         try:
             m = context(work[code], code, held, cash)
@@ -620,9 +637,12 @@ def do(act, calls):
         action, why = strategy.decide(m)
         if action == "hold":
             log(f"  {m['name']}({code}) hold · {why}")
-            done.append(noted(label(m["name"], code), "그대로 둠", why))
-            continue
-        done.append(execute(act, m, held, action, why))
+            item = noted(label(m["name"], code), "그대로 둠", why)
+        else:
+            item = execute(act, m, held, action, why)
+        # 무엇을 보고 그렇게 판단했는지 남깁니다. 비어 있으면 화면에서 바로 보입니다.
+        item["뉴스"] = news or "확인하지 않음"
+        done.append(item)
 
     held, cash = refreshed(act, held, cash, done)
     return {
