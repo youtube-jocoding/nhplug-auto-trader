@@ -66,6 +66,9 @@ td.name{white-space:normal}
 .did b{font-weight:600}
 .did.buy b{color:#c22e2e}
 .did.sell b{color:#1552c7}
+.tag{margin-left:8px;padding:1px 7px;border-radius:999px;background:#eef1ef;color:#66706a;
+font-size:.7rem}
+.tag.live{background:#fdf7e8;color:#8a5f06;font-weight:600}
 .news{font-size:.78rem;color:#66706a;margin:0 0 3px}
 .news.none{color:#c22e2e}
 details{margin-top:4px}
@@ -129,7 +132,12 @@ def rounds_list(rounds):
         return '<p class="none">아직 사고판 기록이 없습니다. 장이 열리면 여기에 쌓입니다.</p>'
     out = ""
     for one in rounds:
-        out += f'<div class="round"><div class="t">{esc(one.get("시각"))}</div>'
+        # 어느 계좌에서 한 일인지 회차마다 붙입니다. 실거래는 눈에 띄게.
+        where = one.get("계좌")
+        tag = ""
+        if where:
+            tag = f'<span class="tag{" live" if where == "실제 계좌" else ""}">{esc(where)}</span>'
+        out += f'<div class="round"><div class="t">{esc(one.get("시각"))}{tag}</div>'
         out += f'<p>{esc(one.get("요약"))}</p>'
         for item in one.get("처리함") or []:
             kind = {"매수": "buy", "매도": "sell"}.get(item.get("구분"), "")

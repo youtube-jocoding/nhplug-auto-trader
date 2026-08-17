@@ -203,6 +203,67 @@ class IntegrationHelpersTests(unittest.TestCase):
             held, cash = trade.refreshed("500", old, 1_000_000, [sold])
         self.assertEqual(held, old)
 
+    def test_blocked_orders_say_exactly_what_blocked_them(self):
+        # 넷을 다 "승인을 받지 못함"으로 뭉뚱그리면, 연결이 안 된 것인지 답을
+        # 안 한 것인지 알 수가 없습니다. 실제로 그것 때문에 한참 헤맸습니다.
+        m = {"code": "NVDA", "name": "엔비디아", "market": "us", "currency": "USD",
+             "price": 220.0, "qty": 3, "pnl_pct": 1.0}
+        with mock.patch.object(broker, "MOCK", False):
+            with mock.patch.object(telegram, "configured", return_value=False):
+                self.assertIn("연결되어 있지 않아", trade.approved("500", m, "buy", 1, 220.0))
+            with (
+                mock.patch.object(telegram, "configured", return_value=True),
+                mock.patch.object(telegram, "ask", return_value="n1"),
+                mock.patch.object(telegram, "wait", return_value=None),
+            ):
+                self.assertIn("누르지 않아 취소", trade.approved("500", m, "buy", 1, 220.0))
+            with (
+                mock.patch.object(telegram, "configured", return_value=True),
+                mock.patch.object(telegram, "ask", return_value="n2"),
+                mock.patch.object(telegram, "wait", return_value="reject"),
+            ):
+                self.assertIn("거절", trade.approved("500", m, "buy", 1, 220.0))
+            with (
+                mock.patch.object(telegram, "configured", return_value=True),
+                mock.patch.object(telegram, "ask", return_value="n3"),
+                mock.patch.object(telegram, "wait", return_value="approve"),
+                mock.patch.object(broker, "us_price", return_value=260.0),
+                mock.patch.object(telegram, "price_moved", return_value="10% 올랐습니다"),
+                mock.patch.object(telegram, "notify"),
+            ):
+                self.assertIn("가격이 움직여", trade.approved("500", m, "buy", 1, 220.0))
+            # 통과할 때는 빈 문자열이어야 합니다. 여기가 어긋나면 주문이 다 막힙니다.
+            with (
+                mock.patch.object(telegram, "configured", return_value=True),
+                mock.patch.object(telegram, "ask", return_value="n4"),
+                mock.patch.object(telegram, "wait", return_value="approve"),
+                mock.patch.object(broker, "us_price", return_value=220.5),
+                mock.patch.object(telegram, "price_moved", return_value=None),
+            ):
+                self.assertEqual(trade.approved("500", m, "buy", 1, 220.0), "")
+        # 모의투자는 승인 없이 그대로 지나갑니다.
+        with mock.patch.object(broker, "MOCK", True):
+            self.assertEqual(trade.approved("500", m, "buy", 1, 220.0), "")
+
+    def test_mock_history_is_not_mixed_into_live_history(self):
+        # 가짜 돈으로 한 일이 실제로 한 일처럼 보이면 안 됩니다.
+        with tempfile.TemporaryDirectory() as folder:
+            spot = Path(folder) / "board.json"
+            with mock.patch.object(trade, "BOARD", spot):
+                trade.remember({"장": "열림", "계좌": "모의투자", "요약": "모의로 샀습니다.",
+                                "처리함": [{"종목": "NVDA", "한 일": "매수", "구분": "매수"}]})
+                trade.remember({"장": "열림", "계좌": "실제 계좌", "요약": "실제로 샀습니다.",
+                                "처리함": [{"종목": "NVDA", "한 일": "매수", "구분": "매수"}]})
+                rounds = json.loads(spot.read_text(encoding="utf-8"))["회차"]
+        # 모의 회차는 남지 않고, 갈린 지점이 한 줄로 남습니다.
+        self.assertEqual(len(rounds), 2)
+        self.assertEqual(rounds[0]["요약"], "실제로 샀습니다.")
+        self.assertIn("여기서부터 실제 계좌입니다", rounds[1]["요약"])
+        self.assertNotIn("모의로 샀습니다.", [r["요약"] for r in rounds])
+        # 화면에서 실거래 회차가 눈에 띄어야 합니다.
+        html = board.page({"지금": {}, "회차": rounds})
+        self.assertIn('<span class="tag live">실제 계좌</span>', html)
+
     def test_a_judgment_file_keeps_korean_intact(self):
         # 명령줄로 넘기면 한글이 깨져서 뉴스 칸이 "?? ?? ??"로 들어왔습니다.
         # 파일은 UTF-8로 직접 읽으므로 그 길이 없습니다.

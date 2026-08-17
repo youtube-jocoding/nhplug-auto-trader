@@ -320,6 +320,18 @@ def remember(result):
     #
     # 다만 "이 종목들 정해 주세요"라고 물어보기만 한 회차는 뺍니다. 곧이어 --do 가
     # 결과를 남기므로, 남겨 두면 같은 회차가 묻는 줄과 한 줄로 두 번 쌓입니다.
+    # 모의투자 기록과 실거래 기록이 한 줄에 섞이면, 가짜 돈으로 한 일을 실제로
+    # 한 일로 읽게 됩니다. 계좌가 바뀌면 앞선 기록은 접어 두고 새로 시작합니다.
+    where = result.get("계좌") or saved.get("계좌")
+    if where and saved.get("계좌") and where != saved["계좌"]:
+        rounds = [{
+            "시각": now.strftime("%m-%d %H:%M"),
+            "요약": f"여기서부터 {where}입니다. 위의 기록은 {saved['계좌']}였습니다.",
+            "처리함": [],
+            "계좌": where,
+            "전환": True,  # 이 줄은 회차가 아니라 표시입니다. 덮어쓰지 않습니다.
+        }]
+
     asked_only = bool(result.get("판단해줘")) and not result.get("처리함")
     if result.get("장") == "열림" and not asked_only:
         stamp = now.strftime("%m-%d %H:%M")
@@ -327,10 +339,16 @@ def remember(result):
             "시각": stamp,
             "요약": result.get("요약", ""),
             "처리함": result.get("처리함") or [],
+            "계좌": where,
         }
         # --scan 으로 물어본 뒤 --do 로 주문하면 같은 분에 두 줄이 생깁니다.
         # 뒤에 온 쪽이 실제로 한 일이므로, 아무것도 안 한 앞줄을 덮습니다.
-        if rounds and rounds[0].get("시각") == stamp and not rounds[0].get("처리함"):
+        if (
+            rounds
+            and rounds[0].get("시각") == stamp
+            and not rounds[0].get("처리함")
+            and not rounds[0].get("전환")
+        ):
             rounds[0] = entry
         else:
             rounds.insert(0, entry)
@@ -513,8 +531,9 @@ def buy(act, m, held, reason=""):
         log(f"    살 수 있는 수량이 0주입니다 ({money(budget, m['currency'])} 기준)")
         return f"살 수 있는 수량이 0주 ({money(budget, m['currency'])} 기준)"
 
-    if not approved(act, m, "buy", qty, price, reason):
-        return "승인을 받지 못해 주문하지 않음"
+    denied = approved(act, m, "buy", qty, price, reason)
+    if denied:
+        return denied
 
     if m["market"] == "us":
         order_no = broker.us_order(act, "buy", m["code"], qty, price, order_type)
@@ -538,8 +557,9 @@ def sell(act, m, reason=""):
         log("    당일 매수분이라 아직 팔 수 없습니다")
         return "당일 매수분이라 아직 팔 수 없음"
 
-    if not approved(act, m, "sell", qty, price, reason):
-        return "승인을 받지 못해 주문하지 않음"
+    denied = approved(act, m, "sell", qty, price, reason)
+    if denied:
+        return denied
 
     if m["market"] == "us":
         order_no = broker.us_order(act, "sell", m["code"], qty, price, order_type)
@@ -566,16 +586,18 @@ def _countdown(remaining):
 def approved(act, m, side, qty, price, reason=""):
     """실거래는 Telegram에서 한 번 승인받아야 나갑니다.
 
-    모의투자는 가짜 돈이라 승인 없이 바로 진행합니다. 실거래인데 Telegram이
-    연결되어 있지 않으면 주문하지 않습니다. 승인 없이 실제 돈이 나가는 경로를
-    남겨 두지 않기 위해서입니다.
+    나가도 되면 빈 문자열, 아니면 **왜 못 나갔는지**를 돌려줍니다. 넷을 다
+    "승인을 받지 못함"으로 뭉뚱그리면, 연결이 안 된 것인지 답을 안 한 것인지
+    거절한 것인지 알 수가 없습니다. 실제로 그것 때문에 한참 헤맸습니다.
+
+    모의투자는 가짜 돈이라 승인 없이 바로 진행합니다.
     """
     if broker.MOCK:
-        return True
+        return ""
     if not telegram.configured():
         log("    실거래인데 Telegram이 연결되어 있지 않아 주문하지 않습니다")
         log("    `python setup.py` 에서 연결해 주세요")
-        return False
+        return "Telegram이 연결되어 있지 않아 주문하지 않았습니다"
 
     order = {
         "code": m["code"], "name": m["name"], "market": m["market"],
@@ -591,10 +613,12 @@ def approved(act, m, side, qty, price, reason=""):
 
     if answer is None:
         log("    시간 안에 답이 없어 주문하지 않았습니다")
-        return False
+        return (
+            f"Telegram 승인을 {telegram.ANSWER_TIMEOUT // 60}분 안에 누르지 않아 취소됐습니다"
+        )
     if answer == "reject":
         log("    거절하셔서 주문하지 않았습니다")
-        return False
+        return "Telegram에서 거절하셔서 주문하지 않았습니다"
 
     # 승인을 누른 시점에 가격이 크게 불리해졌으면 보내지 않습니다.
     latest = broker.us_price(m["code"]) if m["market"] == "us" else broker.price(m["code"])
@@ -602,8 +626,8 @@ def approved(act, m, side, qty, price, reason=""):
     if moved:
         log(f"    {moved}")
         telegram.notify(f"{m['name']}: {moved}. 다음 확인에서 최신 가격으로 다시 만듭니다.")
-        return False
-    return True
+        return f"승인 뒤 가격이 움직여 보내지 않았습니다 · {moved}"
+    return ""
 
 
 def open_setup():
