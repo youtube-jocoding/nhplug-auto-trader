@@ -152,8 +152,14 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertIn("500,000,000원", html)
         self.assertIn("미국장 정규장", html)  # regular 를 사람 말로 바꿉니다
         self.assertIn("세 조건이 맞습니다", html)
-        # 한 번도 안 돌았어도 빈 화면 대신 무슨 뜻인지 말해 줘야 합니다.
-        self.assertIn("아직 예약이 한 번도 돌지 않았습니다", board.page({}))
+    def test_empty_board_says_which_folder_it_is_reading(self):
+        # 예약이 도는 컴퓨터와 화면을 띄운 컴퓨터가 달라서 비어 보이는 일이
+        # 실제로 있었습니다. 빈 화면이 스스로 그 사실을 짚어 줘야 합니다.
+        empty = board.page({})
+        self.assertIn("이 폴더에서는 아직 예약이 돈 적이 없습니다", empty)
+        self.assertIn("컴퓨터가 서로 다른 것입니다", empty)
+        self.assertIn("board.json", empty)  # 어느 파일을 읽는지 밝힙니다
+        self.assertIn("/?load=1", empty)  # 기다리지 않고 지금 채울 수 있습니다
 
     def test_board_does_not_let_a_stock_name_become_html(self):
         # 종목 이름은 NH가 준 글자입니다. 그대로 넣으면 화면이 깨집니다.
@@ -353,6 +359,15 @@ class IntegrationHelpersTests(unittest.TestCase):
         line = trade.summary([bought], [], [])
         self.assertIn("매수 주문 5주 @ $225.61", line)
         self.assertNotIn("MACD", line)
+
+    def test_stock_names_do_not_end_up_with_doubled_brackets(self):
+        # NH가 주는 이름에 이미 괄호가 들어 있습니다. 그대로 코드를 붙이면
+        # "AMD(어드밴스드 마이크로 디바이시스)(AMD)" 가 됩니다.
+        self.assertEqual(trade.label("AMD(어드밴스드 마이크로 디바이시스)", "AMD"), "AMD")
+        self.assertEqual(trade.label("TSMC(타이완반도체제조)", "TSM"), "TSMC(TSM)")
+        self.assertEqual(trade.label("엔비디아", "NVDA"), "엔비디아(NVDA)")
+        self.assertEqual(trade.label("삼성전자", "005930"), "삼성전자(005930)")
+        self.assertEqual(trade.label("", "005930"), "005930")
 
     def test_result_carries_what_i_now_hold(self):
         # 주문했다는 말만 있고 지금 뭘 들고 있는지가 없으면 증권사 앱을 또 열게 됩니다.

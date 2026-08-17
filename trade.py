@@ -345,8 +345,12 @@ def facts(m):
 
 
 def label(name, code):
-    """화면에 쓸 종목 이름. AMD처럼 이름과 티커가 같으면 두 번 적지 않습니다."""
-    name = (name or "").strip()
+    """화면에 쓸 종목 이름.
+
+    NH는 "AMD(어드밴스드 마이크로 디바이시스)"처럼 이름 안에 이미 괄호를 넣어
+    줍니다. 거기에 코드를 또 붙이면 "AMD(…)(AMD)"가 됩니다. 괄호 앞만 씁니다.
+    """
+    name = (name or "").split("(")[0].strip()
     return code if not name or name == code else f"{name}({code})"
 
 

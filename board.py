@@ -13,6 +13,7 @@ import http.server
 import json
 import secrets
 import sys
+import urllib.parse
 import webbrowser
 
 import setup  # 화면을 어떻게 띄울지(브라우저·에이전트·공개)는 이미 정해 두었습니다
@@ -66,6 +67,9 @@ details{margin-top:4px}
 summary{cursor:pointer;font-size:.78rem;color:#8b948f}
 details p{font-size:.82rem;color:#66706a;margin:6px 0 0;white-space:pre-wrap}
 .none{color:#8b948f;font-size:.87rem;margin:0}
+a{color:#08733f}
+a.btn{display:inline-block;text-decoration:none;background:#08733f;color:#fff;
+padding:9px 16px;border-radius:8px;font-size:.88rem;font-weight:500}
 footer{color:#8b948f;font-size:.76rem;text-align:center;margin-top:26px;line-height:1.7}
 """
 
@@ -129,11 +133,19 @@ def rounds_list(rounds):
 def page(saved):
     """남겨 둔 것을 화면 하나로. 파일이 없으면 무엇을 하면 되는지 알려 줍니다."""
     if not saved:
+        # 여기서 막히면 대개 "예약이 도는 컴퓨터"와 "이 화면을 띄운 컴퓨터"가
+        # 다른 경우입니다. 어느 폴더를 읽고 있는지 밝혀 두면 바로 알아챕니다.
         return HEAD.format(style=STYLE, refresh="") + (
             "<main><h1>자동매매 현황</h1>"
-            '<div class="card"><p class="none">아직 예약이 한 번도 돌지 않았습니다.<br>'
-            "장이 열린 뒤 예약이 한 번 돌면 여기에 지금 상황이 나옵니다.</p></div>"
-            "</main></body></html>"
+            '<div class="card"><p class="none">'
+            "<b>이 폴더에서는 아직 예약이 돈 적이 없습니다.</b><br><br>"
+            "장이 열린 뒤 예약이 한 번 돌면 여기에 채워집니다.<br>"
+            "예약은 도는데 계속 이 화면이라면, 예약이 도는 컴퓨터와 이 화면을 띄운 "
+            "컴퓨터가 서로 다른 것입니다.</p>"
+            f'<p style="margin-top:14px"><a class="btn" href="/?load=1">지금 계좌 불러오기</a></p>'
+            '<p class="none" style="margin-top:10px">NH에 계좌만 물어봅니다. 주문하지 않습니다.</p>'
+            f'<p class="none" style="margin-top:14px">읽는 곳 {esc(trade.BOARD)}</p>'
+            "</div></main></body></html>"
         )
 
     now = saved.get("지금") or {}
@@ -146,7 +158,8 @@ def page(saved):
     return HEAD.format(style=STYLE, refresh=f'<meta http-equiv="refresh" content="{REFRESH}">') + f"""
 <main>
 <h1>자동매매 현황</h1>
-<p class="when">마지막 실행 {esc(saved.get("마지막실행", "-"))} · {REFRESH}초마다 저절로 새로 그립니다</p>
+<p class="when">마지막 실행 {esc(saved.get("마지막실행", "-"))} · {REFRESH}초마다 저절로 새로 그립니다
+ · <a href="/?load=1">지금 계좌 불러오기</a></p>
 <div class="chips">{chips}</div>
 
 <div class="big">
@@ -176,25 +189,45 @@ def read_board():
         return {}
 
 
+def load_now():
+    """NH에 계좌만 물어봐서 화면을 채웁니다. 주문하지 않습니다.
+
+    예약을 기다리지 않고 지금 보고 싶을 때를 위한 것입니다. 조회 전용 모드만
+    부르므로, 이 화면에서 주문이 나갈 길은 여전히 없습니다.
+    """
+    try:
+        setup.run_child(["trade.py", "--account"], timeout=120)
+    except Exception as exc:
+        print(f"계좌를 불러오지 못했습니다: {exc}")
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, *args):
         pass
 
-    def do_GET(self):
-        if not setup.Handler.allowed(self):
-            body = "주소 끝의 열쇠말이 없거나 틀렸습니다.".encode("utf-8")
-            self.send_response(403)
-        else:
-            self.server.opened = True
-            body = page(read_board()).encode("utf-8")
-            self.send_response(200)
-        self.send_header("Content-Type", "text/html; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
+    def _send(self, status, body, kind="text/html", location=None):
+        raw = body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", f"{kind}; charset=utf-8")
+        self.send_header("Content-Length", str(len(raw)))
+        if location:
+            self.send_header("Location", location)
         token = getattr(self.server, "token", None)
         if token:
             self.send_header("Set-Cookie", f"nh_setup={token}; Path=/; SameSite=Strict")
         self.end_headers()
-        self.wfile.write(body)
+        self.wfile.write(raw)
+
+    def do_GET(self):
+        if not setup.Handler.allowed(self):
+            return self._send(403, "주소 끝의 열쇠말이 없거나 틀렸습니다.", "text/plain")
+        self.server.opened = True
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+        if query.get("load") == ["1"]:
+            load_now()
+            # 주소에 load가 남아 있으면 60초마다 NH에 다시 묻게 됩니다. 되돌려 보냅니다.
+            return self._send(303, "불러왔습니다.", location="/")
+        self._send(200, page(read_board()))
 
 
 USAGE = """python board.py            지금 상황을 화면으로 봅니다
@@ -224,7 +257,9 @@ def main():
     opts = parse_args(sys.argv[1:])
     host = "0.0.0.0" if opts["public"] else "127.0.0.1"
     port = setup.free_port(host, opts["port"])
-    server = http.server.HTTPServer((host, port), Handler)
+    # 스레드를 씁니다. 브라우저는 미리 연결만 열어 두고 아무것도 보내지 않는 일이
+    # 있는데, 한 줄로 도는 서버는 그 빈 연결을 기다리다 화면 전체가 멈춥니다.
+    server = http.server.ThreadingHTTPServer((host, port), Handler)
     server.opened = False
     rule = None
 

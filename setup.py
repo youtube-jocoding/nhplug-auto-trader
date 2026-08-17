@@ -844,7 +844,9 @@ def main():
     opts = parse_args(sys.argv[1:])
     host = "0.0.0.0" if opts["public"] else "127.0.0.1"
     port = free_port(host, opts["port"])
-    server = http.server.HTTPServer((host, port), Handler)
+    # 스레드를 씁니다. 브라우저가 미리 연결만 열어 두고 아무것도 보내지 않으면,
+    # 한 줄로 도는 서버는 그 빈 연결을 기다리다 화면 전체가 멈춥니다.
+    server = http.server.ThreadingHTTPServer((host, port), Handler)
     server.opened = False
     only_from, rule = None, None
 
