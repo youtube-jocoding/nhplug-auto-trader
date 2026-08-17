@@ -315,6 +315,11 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertIn("check.py", guide)  # 검사를 통과해야 실제 돈으로 갑니다
         self.assertIn("키나 비밀번호는 묻지도", guide)
         self.assertIn("명령줄을 사용자에게 보여주지", guide)
+        # 실제 돈으로 넘어가는 순간이 전략을 다시 볼 유일한 자연스러운 지점입니다.
+        self.assertIn("상담을 다시", guide)
+        self.assertIn("잃어도 생활에 지장 없는 금액", guide)
+        # 눈에 걸리는 것은 짚어 주되, 무엇을 하라고 시키지는 않습니다.
+        self.assertIn("고치라고 시키지 말고", guide)
 
     def test_limits_are_visible_without_opening_the_strategy_file(self):
         # 파일을 못 여는 사람이 자기 돈이 얼마나 걸려 있는지 알 길이 있어야 합니다.
