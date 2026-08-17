@@ -201,6 +201,9 @@ td.down{color:#1552c7}
   <label><span>APP KEY</span><input type="password" id="key" autocomplete="off" placeholder="붙여넣기"></label>
   <label><span>APP SECRET</span><input type="password" id="secret" autocomplete="off" placeholder="붙여넣기"></label>
 
+  <p class="help" id="k-hint" hidden>키는 이미 저장돼 있습니다.
+    <b>계좌만 바꾸려면 위 두 칸은 비워 둔 채</b> 아래에서 고르고 저장하세요.</p>
+
   <p class="help" style="margin-bottom:6px">어느 계좌로 주문할까요?</p>
   <div class="where">
     <button type="button" id="m-mock" aria-pressed="true" onclick="setMock(1)">모의투자 계좌</button>
@@ -321,6 +324,7 @@ async function refresh(){
   document.getElementById('todo').textContent = todo;
   if (s.keys) for (const id of ['s2','s3','s4','s5']) document.getElementById(id).classList.remove('dim');
   if (s.keys) document.getElementById('k-state').textContent = '연결됨';
+  document.getElementById('k-hint').hidden = !s.keys;
   if (s.telegram) document.getElementById('t-state').textContent = '연결됨';
   setMock(s.live ? 0 : 1);
 }
@@ -580,6 +584,12 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def save(self, body):
         key, secret = body.get("key", "").strip(), body.get("secret", "").strip()
+        # 모의 ↔ 실제만 바꾸려는 사람에게 키를 다시 찾아오게 하지 않습니다.
+        # 모의와 실제가 같은 키를 쓰므로, 비워 두면 저장된 것을 그대로 씁니다.
+        if not key and not secret:
+            saved = dotenv_values(ENV)
+            key = str(saved.get("NHPLUG_APP_KEY", "")).strip()
+            secret = str(saved.get("NHPLUG_APP_SECRET", "")).strip()
         if not key or not secret:
             return False, "APP KEY와 APP SECRET을 모두 넣어 주세요."
         mock = bool(body.get("mock", 1))

@@ -251,6 +251,22 @@ class IntegrationHelpersTests(unittest.TestCase):
         for forbidden in ("update_env", "--do", "--scan", "do_POST", "broker.order"):
             self.assertNotIn(forbidden, source)
 
+    def test_switching_to_the_real_account_does_not_ask_for_the_keys_again(self):
+        # 모의 ↔ 실제만 바꾸려는 사람이 키를 다시 찾아와야 한다면, 개발을 모르는
+        # 사람에게는 그 자리에서 막히는 것과 같습니다. 같은 키를 쓰니 그대로 씁니다.
+        with tempfile.TemporaryDirectory() as folder:
+            env = Path(folder) / ".env"
+            env.write_text("NHPLUG_APP_KEY=abc\nNHPLUG_APP_SECRET=xyz\nNH_MOCK=1\n", encoding="utf-8")
+            with (
+                mock.patch.object(setup, "ENV", env),
+                mock.patch.object(setup, "check_connection", return_value=(True, "연결됐습니다.")),
+                mock.patch.object(setup, "current_state", return_value={"telegram": True}),
+            ):
+                ok, _ = setup.Handler.save(None, {"key": "", "secret": "", "mock": 0})
+                self.assertTrue(ok)
+                self.assertEqual(setup.dotenv_values(env)["NH_MOCK"], "0")
+                self.assertEqual(setup.dotenv_values(env)["NHPLUG_APP_KEY"], "abc")
+
     def test_setup_screen_can_show_the_account_without_ordering(self):
         # 예약이 사고판 결과를 증권사 앱을 열지 않고 확인할 수 있어야 합니다.
         self.assertIn("지금 내 계좌", setup.PAGE)
