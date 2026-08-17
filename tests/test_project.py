@@ -203,6 +203,40 @@ class IntegrationHelpersTests(unittest.TestCase):
             held, cash = trade.refreshed("500", old, 1_000_000, [sold])
         self.assertEqual(held, old)
 
+    def test_a_judgment_file_keeps_korean_intact(self):
+        # 명령줄로 넘기면 한글이 깨져서 뉴스 칸이 "?? ?? ??"로 들어왔습니다.
+        # 파일은 UTF-8로 직접 읽으므로 그 길이 없습니다.
+        with tempfile.TemporaryDirectory() as folder:
+            spot = Path(folder) / "judgment.json"
+            spot.write_text(json.dumps(
+                {"NVDA": {"decision": "hold", "reason": "유지", "news": "관련 제목 없음"}},
+                ensure_ascii=False), encoding="utf-8")
+            calls = trade.read_calls([str(spot)])
+        self.assertEqual(calls["NVDA"]["news"], "관련 제목 없음")
+
+        # 파일이 없으면 조용히 넘어가지 않고 어디를 못 찾았는지 말합니다.
+        with self.assertRaises(ValueError) as raised:
+            trade.read_calls(["없는파일.json"])
+        self.assertIn("없는파일.json", str(raised.exception))
+
+        # JSON을 그대로 준 예전 방식도 계속 받습니다.
+        self.assertEqual(trade.read_calls(['{"NVDA": "hold"}']), {"NVDA": "hold"})
+
+    def test_rounds_that_only_ask_are_not_written_down(self):
+        # "이 9종목은 사고팔지 정해 주세요"는 곧이어 --do 가 결과를 남깁니다.
+        # 둘 다 남기면 같은 회차가 두 줄로 쌓여 기록이 읽기 어려워집니다.
+        with tempfile.TemporaryDirectory() as folder:
+            spot = Path(folder) / "board.json"
+            with mock.patch.object(trade, "BOARD", spot):
+                trade.remember({"장": "열림", "요약": "9종목은 사고팔지 정해 주세요.",
+                                "처리함": [], "판단해줘": [{"이름": "엔비디아"}]})
+                self.assertEqual(json.loads(spot.read_text(encoding="utf-8"))["회차"], [])
+
+                # 물어볼 것도 없이 다 그대로 둔 회차는 남깁니다. 돌았다는 증거입니다.
+                trade.remember({"장": "열림", "요약": "9종목 다 그대로 뒀습니다.",
+                                "처리함": [], "판단해줘": []})
+                self.assertEqual(len(json.loads(spot.read_text(encoding="utf-8"))["회차"]), 1)
+
     def test_a_scan_round_is_replaced_by_the_order_that_follows_it(self):
         # --scan 으로 물어보고 --do 로 주문하면 같은 분에 두 줄이 생깁니다.
         with tempfile.TemporaryDirectory() as folder:

@@ -293,8 +293,11 @@ def remember(result):
 
     # 장이 열려 있던 회차는 **주문이 없었어도** 남깁니다. "봤고 그대로 뒀다"도
     # 알아야 할 소식입니다. 예약이 돌긴 도는지 확인할 길이 이것뿐이기도 합니다.
-    # 장이 닫힌 회차만 뺍니다. 그것까지 쌓으면 기록이 빈 줄로 뒤덮입니다.
-    if result.get("장") == "열림":
+    #
+    # 다만 "이 종목들 정해 주세요"라고 물어보기만 한 회차는 뺍니다. 곧이어 --do 가
+    # 결과를 남기므로, 남겨 두면 같은 회차가 묻는 줄과 한 줄로 두 번 쌓입니다.
+    asked_only = bool(result.get("판단해줘")) and not result.get("처리함")
+    if result.get("장") == "열림" and not asked_only:
         stamp = now.strftime("%m-%d %H:%M")
         entry = {
             "시각": stamp,
@@ -673,10 +676,22 @@ def traded(done, held):
 
 
 def read_calls(argv):
-    """--do 뒤에 붙은 JSON. 인자로 줘도 되고 표준입력으로 넘겨도 됩니다."""
+    """--do 뒤에 붙은 판단. 파일로 주는 것이 가장 안전합니다.
+
+    명령줄로 넘기면 한글이 깨질 수 있습니다. 실제로 뉴스 칸이 "?? ?? ??"로
+    들어온 적이 있습니다. 셸과 콘솔 인코딩을 거치기 때문입니다. 파일은 UTF-8로
+    직접 읽으므로 그 길이 없습니다. 표준입력도 바이트로 받아 UTF-8로 읽습니다.
+    """
     text = " ".join(argv).strip()
+    if text and not text.lstrip().startswith("{"):
+        # JSON이 아니라 파일 경로로 준 경우.
+        spot = Path(text)
+        if not spot.exists():
+            raise ValueError(f"판단 파일을 찾지 못했습니다: {text}")
+        text = spot.read_text(encoding="utf-8").strip()
     if not text:
-        text = sys.stdin.read().strip()
+        raw = sys.stdin.buffer.read() if hasattr(sys.stdin, "buffer") else b""
+        text = raw.decode("utf-8", errors="replace").strip() or sys.stdin.read().strip()
     if not text:
         raise ValueError("판단이 비어 있습니다")
     calls = json.loads(text)
