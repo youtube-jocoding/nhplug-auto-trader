@@ -252,7 +252,9 @@ td.down{color:#1552c7}
 <section id="s5" class="dim">
   <h2><b>5</b> 지금 내 계좌</h2>
   <p class="help">예약이 사고판 결과가 실제로 어떻게 되어 있는지 여기서 봅니다.
-    증권사 앱을 따로 열지 않아도 됩니다. 조회만 하고 주문은 하지 않습니다.</p>
+    증권사 앱을 따로 열지 않아도 됩니다. 조회만 하고 주문은 하지 않습니다.
+    <br>예약이 <b>회차마다 무엇을 했는지</b>까지 보려면 <code>python board.py</code> 로
+    현황 화면을 띄우세요. 예약 메시지 끝에도 그 주소가 함께 옵니다.</p>
   <button class="ghost" onclick="account()" id="a-btn">계좌 새로고침</button>
   <div id="acct" hidden style="margin-top:12px"></div>
   <div id="m5" class="msg" hidden></div>
@@ -808,15 +810,18 @@ def manual_guide(port):
     )
 
 
-def public_guide(url, port, minutes, rule, only_from):
+def public_guide(url, port, minutes, rule, only_from, what="설정 화면"):
     who = f"{only_from} 에서만" if only_from else "아무 주소에서나"
     lines = [
-        "설정 화면을 이 서버 주소로 잠깐 열었습니다. 아래 주소로 접속하세요.",
+        f"{what}을 이 서버 주소로 열었습니다. 아래 주소로 접속하세요.",
         "",
         f"     {url}",
         "",
         "주소 끝의 열쇠말까지 통째로 복사해야 열립니다.",
-        f"{minutes}분이 지나면 스스로 닫습니다. 다 끝냈으면 Ctrl+C 로 바로 닫아 주세요.",
+        # 설정 화면은 키를 넣는 곳이라 시한을 둡니다. 보기만 하는 화면은 켜 둡니다.
+        f"{minutes}분이 지나면 스스로 닫습니다. 다 끝냈으면 Ctrl+C 로 바로 닫아 주세요."
+        if minutes
+        else "보기만 하는 화면이라 켜 둔 채로 두어도 됩니다. 닫으려면 Ctrl+C.",
     ]
     if rule:
         lines.append(f"방화벽(ufw)은 이 포트를 {who} 열어 두었고, 닫을 때 되돌립니다.")

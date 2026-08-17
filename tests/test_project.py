@@ -9,6 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 
+import board
 import broker
 import check
 import setup
@@ -133,6 +134,39 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertNotIn("confirmStrategy", setup.PAGE)
         self.assertNotIn("cf-btn", setup.PAGE)
         self.assertFalse(hasattr(setup.Handler, "confirm"))
+
+    def test_board_draws_what_the_schedule_left_behind(self):
+        saved = {
+            "마지막실행": "2026-08-18 23:30", "계좌": "모의투자",
+            "국내장": "닫힘", "미국장": "regular",
+            "지금": {"보유": [{"종목": "엔비디아(NVDA)", "수량": 5, "평균매입가": "$225.60",
+                             "현재가": "$226.22", "평가금액": "$1,131.10", "손익": "+0.27%"}],
+                    "종목수": "1 / 5", "주문가능현금": "500,000,000원"},
+            "회차": [{"시각": "08-18 23:30", "요약": "1종목 샀습니다 — 엔비디아(NVDA).",
+                     "처리함": [{"종목": "엔비디아(NVDA)", "한 일": "매수 주문 5주", "구분": "매수",
+                                "이유": "세 조건이 맞습니다"}]}],
+        }
+        html = board.page(saved)
+        self.assertIn("<!doctype html>", html)
+        self.assertIn("엔비디아(NVDA)", html)
+        self.assertIn("500,000,000원", html)
+        self.assertIn("미국장 정규장", html)  # regular 를 사람 말로 바꿉니다
+        self.assertIn("세 조건이 맞습니다", html)
+        # 한 번도 안 돌았어도 빈 화면 대신 무슨 뜻인지 말해 줘야 합니다.
+        self.assertIn("아직 예약이 한 번도 돌지 않았습니다", board.page({}))
+
+    def test_board_does_not_let_a_stock_name_become_html(self):
+        # 종목 이름은 NH가 준 글자입니다. 그대로 넣으면 화면이 깨집니다.
+        saved = {"지금": {"보유": [{"종목": "<script>x</script>", "수량": 1, "평균매입가": "-",
+                                  "현재가": "-", "평가금액": "-", "손익": "+0.00%"}]}, "회차": []}
+        self.assertNotIn("<script>x", board.page(saved))
+        self.assertIn("&lt;script&gt;", board.page(saved))
+
+    def test_board_never_orders_or_writes_settings(self):
+        # 계속 켜 두는 화면입니다. 여기서 주문이나 .env 수정이 가능하면 안 됩니다.
+        source = Path(board.__file__).read_text(encoding="utf-8")
+        for forbidden in ("update_env", "--do", "--scan", "do_POST", "broker.order"):
+            self.assertNotIn(forbidden, source)
 
     def test_setup_screen_can_show_the_account_without_ordering(self):
         # 예약이 사고판 결과를 증권사 앱을 열지 않고 확인할 수 있어야 합니다.

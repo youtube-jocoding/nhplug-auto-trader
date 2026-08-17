@@ -31,6 +31,11 @@ RETRY_SELL = 180
 # 회차마다 새 프로세스로 뜨므로 "방금 시도했다"를 메모리에 둘 수 없습니다.
 TRIED = Path(__file__).with_name(".cache") / "tried.json"
 
+# 예약이 보내는 글만으로는 지금 상황이 한눈에 안 들어옵니다. 회차마다 여기에
+# 남겨 두고, board.py 가 같은 내용을 표와 색으로 그려 줍니다.
+BOARD = Path(__file__).with_name(".cache") / "board.json"
+KEEP_ROUNDS = 20
+
 
 def log(message):
     """진행 상황은 표준오류로 보냅니다. 표준출력은 JSON 몫입니다.
@@ -225,10 +230,11 @@ def portfolio(held, cash):
         # 국내는 6자리 숫자, 미국은 영문 티커입니다. 통화를 여기서 가릅니다.
         currency = "KRW" if code.isdigit() else "USD"
         rows.append({
-            "종목": f"{item['name']}({code})",
+            "종목": label(item["name"], code),
             "수량": item["qty"],
             "평균매입가": money(item["avg"], currency),
             "현재가": money(item["price"], currency),
+            "평가금액": money(item["qty"] * item["price"], currency),
             "손익": f"{item['pnl_pct']:+.2f}%",
         })
     return {
@@ -236,6 +242,45 @@ def portfolio(held, cash):
         "종목수": f"{len(held)} / {strategy.MAX_HOLDINGS}",
         "주문가능현금": f"{cash:,}원",
     }
+
+
+def remember(result):
+    """이번 회차를 대시보드가 읽을 수 있게 남깁니다.
+
+    화면이 스스로 NH에 물어보게 하면, 새로고침할 때마다 시세 조회가 나갑니다.
+    예약이 이미 받아 온 것을 그대로 남겨 두고 화면은 그리기만 합니다.
+
+    남기다 실패해도 매매는 계속돼야 합니다. 여기서 터뜨리지 않습니다.
+    """
+    now = datetime.datetime.now(datetime.timezone.utc).astimezone(SEOUL)
+    try:
+        saved = json.loads(BOARD.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        saved = {}
+    rounds = saved.get("회차") or []
+
+    # 장이 닫힌 회차까지 쌓으면 기록이 빈 줄로 뒤덮입니다. 무슨 일이 있었던
+    # 회차만 남기고, 마지막으로 돈 시각은 따로 적습니다.
+    if result.get("처리함"):
+        rounds.insert(0, {
+            "시각": now.strftime("%m-%d %H:%M"),
+            "요약": result.get("요약", ""),
+            "처리함": result["처리함"],
+        })
+        del rounds[KEEP_ROUNDS:]
+
+    saved |= {"마지막실행": now.strftime("%Y-%m-%d %H:%M"), "회차": rounds}
+    for field in ("계좌", "지금", "국내장", "미국장", "요약"):
+        if field in result:
+            saved[field] = result[field]
+    if "지금" in result:
+        saved["국내장"] = "열림" if kr_open() else "닫힘"
+        saved["미국장"] = broker.us_session()
+    try:
+        BOARD.parent.mkdir(parents=True, exist_ok=True)
+        BOARD.write_text(json.dumps(saved, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError as exc:
+        log(f"화면에 남기지 못했습니다: {exc}")
 
 
 def summary(done, skipped, ask):
@@ -299,6 +344,12 @@ def facts(m):
     return out
 
 
+def label(name, code):
+    """화면에 쓸 종목 이름. AMD처럼 이름과 티커가 같으면 두 번 적지 않습니다."""
+    name = (name or "").strip()
+    return code if not name or name == code else f"{name}({code})"
+
+
 def noted(where, did, reason="", kind="그대로"):
     """한 종목에 무슨 일이 있었는가. **한 일과 이유를 한 줄에 섞지 않습니다.**
 
@@ -313,7 +364,7 @@ def noted(where, did, reason="", kind="그대로"):
 
 def execute(act, m, held, action, reason, dry=False):
     """한 종목을 실제로 주문합니다. 무슨 일이 있었는지 항목으로 돌려줍니다."""
-    where = f"{m['name']}({m['code']})"
+    where = label(m["name"], m["code"])
     kind = "매수" if action == "buy" else "매도"
     log(f"  {where} {money(m['price'], m['currency'])} → {action} · {reason}")
     if dry:
@@ -527,7 +578,7 @@ def do(act, calls):
         action, why = strategy.decide(m)
         if action == "hold":
             log(f"  {m['name']}({code}) hold · {why}")
-            done.append(noted(f"{m['name']}({code})", "그대로 둠", why))
+            done.append(noted(label(m["name"], code), "그대로 둠", why))
             continue
         done.append(execute(act, m, held, action, why))
     return {
@@ -628,6 +679,7 @@ def main():
         # 버튼이 실제로 주문하는 일이 없어야 합니다.
         result = scan(act, dry=(mode == "--preview"))
 
+    remember(result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
 
 
