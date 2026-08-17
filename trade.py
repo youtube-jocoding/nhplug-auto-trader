@@ -331,16 +331,24 @@ def remember(result):
     # 다만 "이 종목들 정해 주세요"라고 물어보기만 한 회차는 뺍니다. 곧이어 --do 가
     # 결과를 남기므로, 남겨 두면 같은 회차가 묻는 줄과 한 줄로 두 번 쌓입니다.
     # 모의투자 기록과 실거래 기록이 한 줄에 섞이면, 가짜 돈으로 한 일을 실제로
-    # 한 일로 읽게 됩니다. 계좌가 바뀌면 앞선 기록은 접어 두고 새로 시작합니다.
+    # 한 일로 읽게 됩니다.
+    #
+    # "계좌가 바뀌는 순간"에만 지우면 안 됩니다. 그 순간의 회차를 놓치면(예전
+    # 코드로 돌았거나 한 번 걸렀거나) 다시는 지울 기회가 없습니다. 실제로 그래서
+    # 모의투자 기록이 실거래 화면에 남았습니다. **매번 지금 계좌 것만 남깁니다.**
+    # 표시가 없는 예전 기록도 여기서 함께 정리됩니다.
     where = result.get("계좌") or saved.get("계좌")
-    if where and saved.get("계좌") and where != saved["계좌"]:
-        rounds = [{
-            "시각": now.strftime("%m-%d %H:%M"),
-            "요약": f"여기서부터 {where}입니다. 위의 기록은 {saved['계좌']}였습니다.",
-            "처리함": [],
-            "계좌": where,
-            "전환": True,  # 이 줄은 회차가 아니라 표시입니다. 덮어쓰지 않습니다.
-        }]
+    if where:
+        mine = [one for one in rounds if one.get("계좌") == where]
+        if len(mine) != len(rounds):
+            mine.append({
+                "시각": now.strftime("%m-%d %H:%M"),
+                "요약": f"여기서부터 {where} 기록입니다. 이전 계좌의 기록은 지웠습니다.",
+                "처리함": [],
+                "계좌": where,
+                "전환": True,  # 이 줄은 회차가 아니라 표시입니다. 덮어쓰지 않습니다.
+            })
+        rounds = mine
 
     asked_only = bool(result.get("판단해줘")) and not result.get("처리함")
     if result.get("장") == "열림" and not asked_only:

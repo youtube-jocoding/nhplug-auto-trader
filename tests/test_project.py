@@ -311,8 +311,28 @@ class IntegrationHelpersTests(unittest.TestCase):
         # 모의 회차는 남지 않고, 갈린 지점이 한 줄로 남습니다.
         self.assertEqual(len(rounds), 2)
         self.assertEqual(rounds[0]["요약"], "실제로 샀습니다.")
-        self.assertIn("여기서부터 실제 계좌입니다", rounds[1]["요약"])
+        self.assertIn("여기서부터 실제 계좌 기록입니다", rounds[1]["요약"])
         self.assertNotIn("모의로 샀습니다.", [r["요약"] for r in rounds])
+
+    def test_old_untagged_rounds_are_cleaned_up_too(self):
+        # 계좌가 바뀌는 순간을 놓치면 다시는 지울 기회가 없었습니다. 실제로 그래서
+        # 모의투자 기록이 실거래 화면에 남았습니다. 매번 지금 계좌 것만 남깁니다.
+        with tempfile.TemporaryDirectory() as folder:
+            spot = Path(folder) / "board.json"
+            spot.write_text(json.dumps({
+                "계좌": "실제 계좌",  # 이미 실거래로 적혀 있는데
+                "회차": [  # 회차에는 표시가 없는 모의투자 시절 기록이 남아 있음
+                    {"시각": "08-18 02:00", "요약": "모의 시절 회차", "처리함": []},
+                    {"시각": "08-18 01:25", "요약": "모의 시절 회차", "처리함": []},
+                ],
+            }, ensure_ascii=False), encoding="utf-8")
+            with mock.patch.object(trade, "BOARD", spot):
+                trade.remember({"장": "열림", "계좌": "실제 계좌", "요약": "실거래 회차",
+                                "처리함": [{"종목": "NVDA", "한 일": "매수", "구분": "매수"}]})
+                rounds = json.loads(spot.read_text(encoding="utf-8"))["회차"]
+        self.assertEqual([r["요약"] for r in rounds][0], "실거래 회차")
+        self.assertNotIn("모의 시절 회차", [r["요약"] for r in rounds])
+        self.assertTrue(any(r.get("전환") for r in rounds))
         # 화면에서 실거래 회차가 눈에 띄어야 합니다.
         html = board.page({"지금": {}, "회차": rounds})
         self.assertIn('<span class="tag live">실제 계좌</span>', html)
