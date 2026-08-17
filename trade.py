@@ -246,11 +246,21 @@ def portfolio(held, cash):
             "평가금액": money(item["qty"] * item["price"], currency),
             "손익": f"{item['pnl_pct']:+.2f}%",
         })
-    return {
+    out = {
         "보유": rows,
         "종목수": f"{len(held)} / {strategy.MAX_HOLDINGS}",
         "주문가능현금": f"{cash:,}원",
     }
+    # 현금이 한 종목 예산보다 적으면 한 주도 못 삽니다. 그런데 화면에는 "주문이
+    # 나간 것이 없습니다"라고만 나와서, 무엇이 잘못됐는지 알 수가 없었습니다.
+    per_kr = strategy.BUY_AMOUNT
+    if cash < per_kr:
+        out["주의"] = (
+            f"주문가능 현금 {cash:,}원이 한 종목 예산 {per_kr:,}원보다 적습니다. "
+            "지금 설정으로는 국내 주식을 한 주도 사지 못합니다. "
+            "입금하시거나 한 종목 금액을 줄여야 합니다."
+        )
+    return out
 
 
 def limits():

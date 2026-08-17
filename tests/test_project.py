@@ -203,6 +203,22 @@ class IntegrationHelpersTests(unittest.TestCase):
             held, cash = trade.refreshed("500", old, 1_000_000, [sold])
         self.assertEqual(held, old)
 
+    def test_not_enough_cash_is_said_out_loud(self):
+        # 실제 계좌에 13만원뿐인데 한 종목 예산이 200만원이었습니다. 한 주도 못 사는데
+        # 화면에는 "주문이 나간 것이 없습니다"라고만 나와서 한참 헤맸습니다.
+        with (
+            mock.patch.object(strategy, "BUY_AMOUNT", 2_000_000),
+            mock.patch.object(strategy, "MAX_HOLDINGS", 5),
+        ):
+            poor = trade.portfolio({}, 136_750)
+            rich = trade.portfolio({}, 4_136_750)
+        self.assertIn("136,750원", poor["주의"])
+        self.assertIn("2,000,000원", poor["주의"])
+        self.assertNotIn("주의", rich)
+        # 화면에서 눈에 띄어야 합니다. 스타일 정의가 아니라 실제로 찍힌 줄로 봅니다.
+        self.assertIn('<p class="alarm">', board.page({"지금": poor, "회차": []}))
+        self.assertNotIn('<p class="alarm">', board.page({"지금": rich, "회차": []}))
+
     def test_silence_is_not_left_to_mean_nothing_happened(self):
         # 승인을 물어보기 전에 막히면 알림이 아예 안 갑니다. 그러면 조용한 밤이
         # 정상인지 고장인지 알 수가 없습니다. 실제로 그래서 헤맸습니다.

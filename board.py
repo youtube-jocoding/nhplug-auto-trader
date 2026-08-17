@@ -69,6 +69,8 @@ td.name{white-space:normal}
 .tag{margin-left:8px;padding:1px 7px;border-radius:999px;background:#eef1ef;color:#66706a;
 font-size:.7rem}
 .tag.live{background:#fdf7e8;color:#8a5f06;font-weight:600}
+.alarm{background:#fff3f2;color:#c22e2e;padding:10px 12px;border-radius:8px;
+font-size:.84rem;margin:0 0 12px;line-height:1.55}
 .news{font-size:.78rem;color:#66706a;margin:0 0 3px}
 .news.none{color:#c22e2e}
 details{margin-top:4px}
@@ -98,9 +100,15 @@ def money_class(text):
 
 
 def holdings_table(now):
+    # 돈이 모자라 아무것도 못 사는 상태를 "주문이 없었다"로 읽으면 안 됩니다.
+    warn = f'<p class="alarm">{esc(now["주의"])}</p>' if now.get("주의") else ""
     rows = now.get("보유") or []
     if not rows:
-        return '<p class="none">아직 들고 있는 종목이 없습니다.</p>'
+        return warn + '<p class="none">아직 들고 있는 종목이 없습니다.</p>'
+    return warn + _rows(rows)
+
+
+def _rows(rows):
     head = "<tr><th>종목</th><th>수량</th><th>평균매입가</th><th>현재가</th><th>평가금액</th><th>손익</th></tr>"
     body = ""
     for row in rows:
