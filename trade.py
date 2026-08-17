@@ -676,7 +676,7 @@ def do(act, calls):
         # 파는 것과 그대로 두는 것은 막지 않습니다. 막으면 못 파는 쪽이 더 위험합니다.
         if decision == "buy" and not news:
             log(f"  {code} 뉴스를 확인하지 않아 사지 않습니다")
-            done.append(noted(code, "사지 않음 · 뉴스를 확인하지 않았습니다", NO_NEWS))
+            done.append(noted(code, "사지 않음 · 뉴스를 확인하지 않았습니다", NO_NEWS, "안 함"))
             continue
         try:
             m = context(work[code], code, held, cash)
@@ -696,6 +696,7 @@ def do(act, calls):
         item["뉴스"] = news or "확인하지 않음"
         done.append(item)
 
+    tell_what_did_not_go(done)
     held, cash = refreshed(act, held, cash, done)
     return {
         "요약": traded(done, held),
@@ -704,6 +705,25 @@ def do(act, calls):
         "지금": portfolio(held, cash),
         "처리함": done,
     }
+
+
+def tell_what_did_not_go(done):
+    """나가지 않은 주문이 있으면 Telegram으로 한 번 알립니다.
+
+    승인을 물어보기 전에 막히면 알림이 아예 안 갑니다. 그러면 아무 일도 없었던
+    것과 구분이 안 되고, 사용자는 조용한 밤을 정상으로 읽습니다. 실제로 그랬습니다.
+    모의투자는 알리지 않습니다. 가짜 돈이라 조용해도 됩니다.
+    """
+    blocked = [item for item in done if item.get("구분") == "안 함"]
+    if not blocked or broker.MOCK or not telegram.configured():
+        return
+    lines = [f"· {item['종목']} — {item['한 일']}" for item in blocked[:6]]
+    if len(blocked) > 6:
+        lines.append(f"… 그 밖에 {len(blocked) - 6}종목")
+    try:
+        telegram.notify("이번 회차에 나가지 않은 주문\n" + "\n".join(lines))
+    except Exception as exc:  # 알리다 실패해도 회차는 끝나야 합니다.
+        log(f"나가지 않은 주문을 알리지 못했습니다: {exc}")
 
 
 def traded(done, held):

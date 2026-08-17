@@ -203,6 +203,43 @@ class IntegrationHelpersTests(unittest.TestCase):
             held, cash = trade.refreshed("500", old, 1_000_000, [sold])
         self.assertEqual(held, old)
 
+    def test_silence_is_not_left_to_mean_nothing_happened(self):
+        # 승인을 물어보기 전에 막히면 알림이 아예 안 갑니다. 그러면 조용한 밤이
+        # 정상인지 고장인지 알 수가 없습니다. 실제로 그래서 헤맸습니다.
+        done = [
+            trade.noted("엔비디아(NVDA)", "사지 않음 · 뉴스를 확인하지 않았습니다", "", "안 함"),
+            trade.noted("마이크론(MU)", "건너뜀 · 조금 전에 이미 시도했습니다", "", "안 함"),
+            trade.noted("TSMC(TSM)", "매수 주문 1주 · 주문번호 9", "", "매수"),
+        ]
+        with (
+            mock.patch.object(broker, "MOCK", False),
+            mock.patch.object(telegram, "configured", return_value=True),
+            mock.patch.object(telegram, "notify") as told,
+        ):
+            trade.tell_what_did_not_go(done)
+        told.assert_called_once()
+        said = told.call_args.args[0]
+        self.assertIn("뉴스를 확인하지 않았습니다", said)
+        self.assertIn("조금 전에 이미 시도했습니다", said)
+        self.assertNotIn("주문번호 9", said)  # 나간 것은 여기 넣지 않습니다
+
+        # 모의투자는 조용해도 됩니다. 가짜 돈입니다.
+        with (
+            mock.patch.object(broker, "MOCK", True),
+            mock.patch.object(telegram, "notify") as told,
+        ):
+            trade.tell_what_did_not_go(done)
+        told.assert_not_called()
+
+        # 다 나갔으면 알릴 것이 없습니다.
+        with (
+            mock.patch.object(broker, "MOCK", False),
+            mock.patch.object(telegram, "configured", return_value=True),
+            mock.patch.object(telegram, "notify") as told,
+        ):
+            trade.tell_what_did_not_go([done[2]])
+        told.assert_not_called()
+
     def test_blocked_orders_say_exactly_what_blocked_them(self):
         # 넷을 다 "승인을 받지 못함"으로 뭉뚱그리면, 연결이 안 된 것인지 답을
         # 안 한 것인지 알 수가 없습니다. 실제로 그것 때문에 한참 헤맸습니다.
