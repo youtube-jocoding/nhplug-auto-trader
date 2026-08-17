@@ -133,6 +133,35 @@ class IntegrationHelpersTests(unittest.TestCase):
         self.assertNotIn("cf-btn", setup.PAGE)
         self.assertFalse(hasattr(setup.Handler, "confirm"))
 
+    def test_setup_decides_by_where_the_browser_is_not_by_the_cloud(self):
+        # "클라우드인가"를 맞히려 들면 언젠가 틀립니다. 판단 기준은 하나입니다.
+        # 이 컴퓨터에서 브라우저를 띄울 수 있는가.
+        blank = {"SSH_CONNECTION": "", "SSH_TTY": "", "DISPLAY": "", "WAYLAND_DISPLAY": ""}
+
+        def ask(platform, browser=True, **extra):
+            found = (
+                mock.Mock(return_value=object())
+                if browser
+                else mock.Mock(side_effect=setup.webbrowser.Error("브라우저 없음"))
+            )
+            with (
+                mock.patch.dict(os.environ, {**blank, **extra}),
+                mock.patch.object(setup.sys, "platform", platform),
+                mock.patch.object(setup.webbrowser, "get", found),
+            ):
+                return setup.has_browser()
+
+        # 내 컴퓨터 — 브라우저가 바로 여기 있으니 그냥 엽니다.
+        self.assertTrue(ask("win32"))
+        self.assertTrue(ask("darwin"))
+        self.assertTrue(ask("linux", DISPLAY=":0"))
+        # 서버 — SSH로 들어왔거나, 화면이 없는 리눅스(에이전트 작업 공간)거나,
+        # 띄울 브라우저가 아예 없거나.
+        self.assertFalse(ask("win32", SSH_CONNECTION="1.2.3.4 5 6.7.8.9 22"))
+        self.assertFalse(ask("linux", SSH_TTY="/dev/pts/0"))
+        self.assertFalse(ask("linux"))
+        self.assertFalse(ask("darwin", browser=False))
+
     def test_setup_on_a_server_never_asks_the_user_to_type_a_command(self):
         # 이 글을 읽는 것은 사람이 아니라 에이전트입니다. 사용자는 터미널을 못 씁니다.
         # 첫 화면에 ssh 한 줄이라도 적히면 에이전트가 그대로 옮겨 붙입니다.
